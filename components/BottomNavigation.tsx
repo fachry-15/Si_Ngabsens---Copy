@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useSegments } from 'expo-router';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
 
 export default function BottomNavigation() {
   const router = useRouter();
@@ -10,8 +10,6 @@ export default function BottomNavigation() {
   const currentTab = segments[segments.length - 1] || 'index';
 
   const isActive = (tabName: string) => {
-    if (!tabName) return false;
-    // Logika Home/Index
     if (tabName === 'index') {
       return currentTab === 'index' || currentTab === '(tabs)' || !currentTab;
     }
@@ -23,51 +21,79 @@ export default function BottomNavigation() {
   };
 
   return (
-    <View style={styles.bottomNavContainer}>
-      <View style={styles.bottomNav}>
-        {/* === 1. KIRI: Board (History) === */}
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={() => navTo('/(tabs)/history')}
-          activeOpacity={0.7}
-        >
-          <Ionicons 
-            name={isActive('history') ? 'bar-chart' : 'bar-chart-outline'} 
-            size={24} 
-            color={isActive('history') ? styles.activeColor.color : styles.inactiveColor.color}
-          />
-          <Text style={[styles.navLabel, isActive('history') && styles.activeColor]}>Riwayat</Text>
-        </TouchableOpacity>
+    <View style={styles.mainWrapper} pointerEvents="box-none">
+      {/* Bar Navigasi Putih */}
+      <View style={styles.barBackground}>
+        
+        {/* SISI KIRI */}
+        <View style={styles.sideSection}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => navTo('/(tabs)/history')}
+          >
+            <Ionicons 
+              name={isActive('history') ? 'bar-chart' : 'bar-chart-outline'} 
+              size={22} 
+              color={isActive('history') ? '#2b5597' : '#9CA3AF'}
+            />
+            <Text style={[styles.navLabel, isActive('history') && styles.activeText]}>Riwayat</Text>
+          </TouchableOpacity>
 
-        {/* === 2. Spacer Kiri (Menjaga jarak untuk Tombol Tengah) === */}
-        <View style={styles.centerSpacer} />
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => navTo('/(tabs)/calendar')}
+          >
+            <Ionicons
+              name={isActive('calendar') ? 'calendar' : 'calendar-outline'}
+              size={22}
+              color={isActive('calendar') ? '#2b5597' : '#9CA3AF'}
+            />
+            <Text style={[styles.navLabel, isActive('calendar') && styles.activeText]}>Kalender</Text>
+          </TouchableOpacity>
+        </View>
 
-        {/* === 3. KANAN: Profile === */}
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={() => navTo('/(tabs)/profile')}
-          activeOpacity={0.7}
-        >
-          <Ionicons 
-            name={isActive('profile') ? 'person' : 'person-outline'} 
-            size={24} 
-            color={isActive('profile') ? styles.activeColor.color : styles.inactiveColor.color}
-          />
-          <Text style={[styles.navLabel, isActive('profile') && styles.activeColor]}>Profil</Text>
-        </TouchableOpacity>
+        {/* RUANG KOSONG UNTUK TOMBOL HOME */}
+        <View style={styles.centerGap} />
 
+        {/* SISI KANAN */}
+        <View style={styles.sideSection}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => navTo('/(tabs)/profile')}
+          >
+            <Ionicons 
+              name={isActive('profile') ? 'person' : 'person-outline'} 
+              size={22} 
+              color={isActive('profile') ? '#2b5597' : '#9CA3AF'}
+            />
+            <Text style={[styles.navLabel, isActive('profile') && styles.activeText]}>Profil</Text>
+          </TouchableOpacity>
+
+          {/* Tombol tambahan atau Menu */}
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => navTo('/(tabs)/overtime')}
+          >
+            <Ionicons 
+              name="grid-outline" 
+              size={22} 
+              color={isActive('overtime') ? '#2b5597' : '#9CA3AF'}
+            />
+            <Text style={[styles.navLabel, isActive('overtime') && styles.activeText]}>Lembur</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* === TOMBOL TENGAH BESAR: HOME === */}
+      {/* TOMBOL HOME TENGAH (FLOATING) */}
       <View style={styles.centerButtonWrapper} pointerEvents="box-none">
         <TouchableOpacity
           style={styles.centerButton}
-          onPress={() => navTo('/(tabs)')} // Arahkan ke Home
+          onPress={() => navTo('/(tabs)')}
           activeOpacity={0.8}
         >
           <Ionicons 
-            name={isActive('index') ? 'home' : 'home-outline'} // Menggunakan ikon Home
-            size={32} 
+            name={isActive('index') ? 'home' : 'home-outline'} 
+            size={28} 
             color="#fff" 
           />
           <Text style={styles.centerButtonLabel}>Beranda</Text>
@@ -78,98 +104,93 @@ export default function BottomNavigation() {
 }
 
 const styles = StyleSheet.create({
-  // --- Color Definitions ---
-  activeColor: {
-    color: '#2b5597', // Biru Aktif
-  },
-  inactiveColor: {
-    color: '#9CA3AF', // Abu-abu Tidak Aktif
-  },
-  
-  // --- Container Styling ---
-  bottomNavContainer: {
+  mainWrapper: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    height: 110,
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    zIndex: 999,
-    height: 100, // Tinggi yang cukup untuk bar dan tombol mengambang
-    backgroundColor: 'transparent', 
+    justifyContent: 'flex-end',
+    backgroundColor: 'transparent',
+    zIndex: 1000,
   },
-  bottomNav: {
+  barBackground: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    // Menggunakan space-around untuk mendistribusikan 2 tombol dan spacer secara merata
-    justifyContent: 'space-around', 
-    backgroundColor: '#FFFFFF', // Latar belakang putih
-    borderRadius: 30,
-    paddingHorizontal: 15,
-    paddingTop: 18, 
-    paddingBottom: 15, 
-    width: '90%', 
-    height: 75, // Tinggi Bar Utama
-    
-    // Shadow yang lebih halus
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 10,
-    
-    position: 'absolute',
-    bottom: 10, // Mengangkat sedikit dari bawah
+    backgroundColor: '#FFFFFF',
+    width: '94%',
+    height: 65,
+    borderRadius: 25,
+    marginBottom: 15,
+    paddingHorizontal: 5,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
+  },
+  sideSection: {
+    flex: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  centerGap: {
+    flex: 1.2, // Memberikan ruang agar tombol kiri/kanan tidak tumpang tindih dengan Home
   },
   navButton: {
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingVertical: 4,
-    flex: 1, 
-    // MaxWidth dihilangkan, Flex akan menyesuaikan ruang
-    height: 50,
+    justifyContent: 'center',
+    minWidth: 60,
   },
   navLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#9CA3AF',
     marginTop: 4,
-    fontWeight: '500', 
     fontFamily: 'Fredoka-Medium',
   },
-  // Spacer yang dihitung agar total lebar tombol dan spacer sesuai
-  centerSpacer: {
-    width: 80, // Memberi ruang kosong yang cukup besar untuk tombol Home
-    height: 50,
+  activeText: {
+    color: '#2b5597',
+    fontFamily: 'Fredoka-SemiBold',
   },
-  // --- Center Button Styling (Tombol HOME) ---
   centerButtonWrapper: {
     position: 'absolute',
-    left: '50%',
-    top: 5, // Ditempatkan di atas bar (Tinggi Bar 75, Tombol 70. 75/2 - 70/2 = 2.5) -> top 5px dari bottomNav 10px
-    transform: [{ translateX: -40 }], // Menggeser setengah lebar tombol (80px/2 = 40px)
-    zIndex: 10,
-    alignItems: 'center',
-  },
-  centerButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#2b5597', // Menggunakan warna primer Anda untuk Home
+    bottom: 30, // Mengambang di atas bar
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#2b5597',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4, // Shadow yang kuat
-    shadowRadius: 15,
-    elevation: 20,
-    borderWidth: 4, 
-    borderColor: '#FFFFFF',
+    zIndex: 1001,
+  },
+  centerButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: '#2b5597',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 5,
+    borderColor: '#F5F7FA', // Sesuaikan dengan warna background utama app anda
+    ...Platform.select({
+      ios: {
+        shadowColor: '#2b5597',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 12,
+      },
+    }),
   },
   centerButtonLabel: {
-    fontSize: 10,
-    color: '#FFFFFF', // Label warna putih
-    fontWeight: '600',
-    marginTop: 0, // Label diletakkan di dalam tombol, bukan di bawah
-    fontFamily: 'Fredoka-Medium',
-  }
+    fontSize: 9,
+    color: '#FFFFFF',
+    fontFamily: 'Fredoka-Bold',
+    marginTop: -2,
+  },
 });

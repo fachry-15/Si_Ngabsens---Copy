@@ -279,17 +279,23 @@ export const attendanceService = {
   /**
    * 6. Mengambil data lembur user
    * @param token Bearer token
-   * @param userId ID user
    * @returns Data lembur user
    */
-  getOvertimeData: async (token: string, userId: number) => {
+  getOvertimeData: async (token: string) => {
     try {
       const response = await fetch(`${API_CONFIG.BASE_URL}/user-overtimes`, {
         method: 'GET',
         headers: getAuthHeaders(token),
       });
-      const data = await response.json();
-      return data;
+      const responseData = await response.json();
+      if (!response.ok) {
+        return { success: false, message: responseData.message || 'Gagal mengambil data lembur', data: [] };
+      }
+      // Pastikan payload sesuai dengan backend: { success: true, data: [ ... ] }
+      return {
+        success: responseData.success === true,
+        data: responseData.data || [],
+      };
     } catch (error) {
       return { success: false, message: 'Gagal mengambil data lembur', data: [] };
     }

@@ -36,6 +36,18 @@ export default function TabLayout() {
             title: 'Profil',
           }}
         />
+        <Tabs.Screen
+          name="calendar"
+          options={{
+            title: 'Kalender',
+          }}
+        />
+        <Tabs.Screen
+          name="overtime"
+          options={{
+            title: 'Jadwal Lembur',
+          }}
+        />
       </Tabs>
     </>
   );
