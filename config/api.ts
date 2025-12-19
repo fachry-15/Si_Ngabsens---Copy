@@ -1,6 +1,6 @@
 // API Configuration
 export const API_CONFIG = {
-  BASE_URL: 'http://192.168.0.109:8000/api',
+  BASE_URL: 'http://192.168.0.110:8000/api',
 };
 
 // Update base URL
