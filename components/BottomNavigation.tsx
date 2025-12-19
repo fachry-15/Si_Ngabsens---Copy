@@ -1,7 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useSegments } from 'expo-router';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, Platform, Dimensions } from 'react-native';
+
+const { width } = Dimensions.get('window');
+
+const COLORS = {
+  PRIMARY: '#2b5597', // Hijau profesional
+  INACTIVE: '#94A3B8', // Abu-abu modern
+  WHITE: '#FFFFFF',
+  BG_SCREEN: '#F8FAFB', // Warna background layar utama Anda
+};
+
+const FONT_FAMILY = Platform.OS === 'ios' ? 'System' : 'sans-serif-medium';
 
 export default function BottomNavigation() {
   const router = useRouter();
@@ -10,93 +21,74 @@ export default function BottomNavigation() {
   const currentTab = segments[segments.length - 1] || 'index';
 
   const isActive = (tabName: string) => {
-    if (tabName === 'index') {
-      return currentTab === 'index' || currentTab === '(tabs)' || !currentTab;
-    }
+    if (tabName === 'index') return currentTab === 'index' || currentTab === '(tabs)' || !currentTab;
     return currentTab === tabName;
   };
 
-  const navTo = (path: string) => {
-    router.push(path);
-  };
+  const navTo = (path: string) => router.push(path);
 
   return (
     <View style={styles.mainWrapper} pointerEvents="box-none">
-      {/* Bar Navigasi Putih */}
-      <View style={styles.barBackground}>
-        
-        {/* SISI KIRI */}
+      
+      {/* EFEK LEKUKAN (PENGGANTI SVG) */}
+      <View style={styles.notchCutter} />
+
+      <View style={styles.barContainer}>
+        {/* SISI KIRI: RIWAYAT & KALENDER */}
         <View style={styles.sideSection}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => navTo('/(tabs)/history')}
-          >
+          <TouchableOpacity style={styles.navButton} onPress={() => navTo('/(tabs)/history')}>
             <Ionicons 
-              name={isActive('history') ? 'bar-chart' : 'bar-chart-outline'} 
+              name={isActive('history') ? "time" : "time-outline"} 
               size={22} 
-              color={isActive('history') ? '#2b5597' : '#9CA3AF'}
+              color={isActive('history') ? COLORS.PRIMARY : COLORS.INACTIVE} 
             />
-            <Text style={[styles.navLabel, isActive('history') && styles.activeText]}>Riwayat</Text>
+            <Text style={[styles.navLabel, isActive('history') && styles.activeLabel]}>Riwayat</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => navTo('/(tabs)/calendar')}
-          >
-            <Ionicons
-              name={isActive('calendar') ? 'calendar' : 'calendar-outline'}
-              size={22}
-              color={isActive('calendar') ? '#2b5597' : '#9CA3AF'}
+          <TouchableOpacity style={styles.navButton} onPress={() => navTo('/(tabs)/calendar')}>
+            <Ionicons 
+              name={isActive('calendar') ? "calendar" : "calendar-outline"} 
+              size={22} 
+              color={isActive('calendar') ? COLORS.PRIMARY : COLORS.INACTIVE} 
             />
-            <Text style={[styles.navLabel, isActive('calendar') && styles.activeText]}>Kalender</Text>
+            <Text style={[styles.navLabel, isActive('calendar') && styles.activeLabel]}>Kalender</Text>
           </TouchableOpacity>
         </View>
 
-        {/* RUANG KOSONG UNTUK TOMBOL HOME */}
+        {/* GAP TENGAH UNTUK HOME */}
         <View style={styles.centerGap} />
 
-        {/* SISI KANAN */}
+        {/* SISI KANAN: LEMBUR & PROFIL */}
         <View style={styles.sideSection}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => navTo('/(tabs)/profile')}
-          >
+          <TouchableOpacity style={styles.navButton} onPress={() => navTo('/(tabs)/overtime')}>
             <Ionicons 
-              name={isActive('profile') ? 'person' : 'person-outline'} 
+              name={isActive('overtime') ? "briefcase" : "briefcase-outline"} 
               size={22} 
-              color={isActive('profile') ? '#2b5597' : '#9CA3AF'}
+              color={isActive('overtime') ? COLORS.PRIMARY : COLORS.INACTIVE} 
             />
-            <Text style={[styles.navLabel, isActive('profile') && styles.activeText]}>Profil</Text>
+            <Text style={[styles.navLabel, isActive('overtime') && styles.activeLabel]}>Lembur</Text>
           </TouchableOpacity>
 
-          {/* Tombol tambahan atau Menu */}
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => navTo('/(tabs)/overtime')}
-          >
+          <TouchableOpacity style={styles.navButton} onPress={() => navTo('/(tabs)/profile')}>
             <Ionicons 
-              name="grid-outline" 
+              name={isActive('profile') ? "person" : "person-outline"} 
               size={22} 
-              color={isActive('overtime') ? '#2b5597' : '#9CA3AF'}
+              color={isActive('profile') ? COLORS.PRIMARY : COLORS.INACTIVE} 
             />
-            <Text style={[styles.navLabel, isActive('overtime') && styles.activeText]}>Lembur</Text>
+            <Text style={[styles.navLabel, isActive('profile') && styles.activeLabel]}>Profil</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* TOMBOL HOME TENGAH (FLOATING) */}
-      <View style={styles.centerButtonWrapper} pointerEvents="box-none">
+      {/* TOMBOL HOME (TENGAH) */}
+      <View style={styles.fabWrapper} pointerEvents="box-none">
         <TouchableOpacity
-          style={styles.centerButton}
+          style={styles.fab}
           onPress={() => navTo('/(tabs)')}
-          activeOpacity={0.8}
+          activeOpacity={0.9}
         >
-          <Ionicons 
-            name={isActive('index') ? 'home' : 'home-outline'} 
-            size={28} 
-            color="#fff" 
-          />
-          <Text style={styles.centerButtonLabel}>Beranda</Text>
+          <Ionicons name={isActive('index') ? "home" : "home-outline"} size={28} color="#fff" />
+          <Text style={styles.fabLabel}>Home</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -109,31 +101,39 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 110,
+    height: 120,
     alignItems: 'center',
     justifyContent: 'flex-end',
-    backgroundColor: 'transparent',
     zIndex: 1000,
   },
-  barBackground: {
+  barContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    width: '94%',
-    height: 65,
+    backgroundColor: COLORS.WHITE,
+    width: width * 0.94, // Sedikit lebih lebar agar proporsional dengan label
+    height: 75,
     borderRadius: 25,
-    marginBottom: 15,
-    paddingHorizontal: 5,
+    marginBottom: 20,
+    alignItems: 'center',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 5 },
+        shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.1,
         shadowRadius: 10,
       },
       android: {
-        elevation: 10,
+        elevation: 8,
       },
     }),
+  },
+  notchCutter: {
+    position: 'absolute',
+    top: 0, 
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: COLORS.BG_SCREEN, // Harus sama dengan warna background layar utama
+    zIndex: 0,
   },
   sideSection: {
     flex: 2,
@@ -142,55 +142,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   centerGap: {
-    flex: 1.2, // Memberikan ruang agar tombol kiri/kanan tidak tumpang tindih dengan Home
+    flex: 1.2,
   },
   navButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 60,
+    paddingTop: 5,
   },
   navLabel: {
     fontSize: 10,
-    color: '#9CA3AF',
+    color: COLORS.INACTIVE,
     marginTop: 4,
-    fontFamily: 'Fredoka-Medium',
+    fontFamily: FONT_FAMILY,
   },
-  activeText: {
-    color: '#2b5597',
-    fontFamily: 'Fredoka-SemiBold',
+  activeLabel: {
+    color: COLORS.PRIMARY,
+    fontWeight: '600',
   },
-  centerButtonWrapper: {
+  fabWrapper: {
     position: 'absolute',
-    bottom: 30, // Mengambang di atas bar
+    bottom: 40,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1001,
   },
-  centerButton: {
+  fab: {
     width: 70,
     height: 70,
     borderRadius: 35,
-    backgroundColor: '#2b5597',
+    backgroundColor: COLORS.PRIMARY,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 5,
-    borderColor: '#F5F7FA', // Sesuaikan dengan warna background utama app anda
+    borderWidth: 6,
+    borderColor: COLORS.WHITE,
     ...Platform.select({
       ios: {
-        shadowColor: '#2b5597',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.4,
-        shadowRadius: 10,
+        shadowColor: COLORS.PRIMARY,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 6,
       },
       android: {
-        elevation: 12,
+        elevation: 6,
       },
     }),
   },
-  centerButtonLabel: {
+  fabLabel: {
     fontSize: 9,
-    color: '#FFFFFF',
-    fontFamily: 'Fredoka-Bold',
+    color: COLORS.WHITE,
+    fontWeight: 'bold',
     marginTop: -2,
   },
 });
