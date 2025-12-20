@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,39 +11,119 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming
+} from 'react-native-reanimated';
+import {
+  Camera,
+  useCameraDevice,
+  useCameraFormat,
+  useCameraPermission,
+  useFrameProcessor
+} from 'react-native-vision-camera';
+import { useFaceDetector } from 'react-native-vision-camera-face-detector';
+import { Worklets } from 'react-native-worklets-core';
+
 import { attendanceService } from '../services/attendanceService';
 import { authStore } from '../store/authStore';
 
-// Perhitungan rasio agar kamera tidak gepeng (Rasio standar sensor 4:3)
 const { width: screenWidth } = Dimensions.get('window');
-const cameraHeight = (screenWidth - 40) * (4 / 3); 
+const cameraSize = screenWidth * 0.85;
+
+const COLORS = {
+  PRIMARY: '#2D8A61',
+  SUCCESS: '#10B981',
+  DANGER: '#EF4444',
+  WHITE: '#FFFFFF',
+  TEXT: '#1E293B',
+  SUBTEXT: '#94A3B8'
+};
 
 export default function CheckInScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const statusType = params.status as string;
-  const notesParam = params.notes as string | undefined;
+
+  const device = useCameraDevice('front');
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const camera = useRef<Camera>(null);
+  
+  // Optimasi FPS & Resolusi (Agar tidak berat)
+  const format = useCameraFormat(device, [
+    { fps: 30 },
+    { videoResolution: { width: 1280, height: 720 } },
+    { pixelFormat: 'yuv' }
+  ]);
+
+  // Ref untuk Throttling (Deteksi 5x per detik saja)
+  const lastProcessedTime = useRef(0);
+
+  const { detectFaces } = useFaceDetector({
+    performanceMode: 'fast',
+    classificationMode: 'none', 
+  });
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [area, setArea] = useState<string>('');
-  const [permission, requestPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState<string | null>(null);
-  const [cameraRef, setCameraRef] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [facing, setFacing] = useState<'front' | 'back'>('front');
-  const [notes, setNotes] = useState('');
+  
+  // LOGIC STATES
+  const [step, setStep] = useState<'SHAKE' | 'FACE_CHECK' | 'READY'>('SHAKE');
+  const [isFaceDetected, setIsFaceDetected] = useState(false);
+  const shakeProgress = useSharedValue(0);
 
-  // Set notes dari query param jika ada (untuk check out early)
-  useEffect(() => {
-    if (statusType === 'checkout' && notesParam && notes === '') {
-      setNotes(notesParam);
+  const updateLivenessLogic = Worklets.createRunOnJS((detected: boolean, yaw: number) => {
+    setIsFaceDetected(detected);
+
+    if (!detected) {
+      // Jika wajah hilang, reset progress kecuali sudah READY
+      if (step !== 'READY') {
+        setStep('SHAKE');
+        shakeProgress.value = withTiming(0);
+      }
+      return;
     }
-  }, [statusType, notesParam]);
+
+    if (step === 'SHAKE') {
+      const currentShake = Math.min(Math.abs(yaw) / 20, 1);
+      if (currentShake > shakeProgress.value) {
+        shakeProgress.value = withTiming(currentShake, { duration: 150 });
+      }
+      if (shakeProgress.value >= 0.95) {
+        setStep('FACE_CHECK');
+      }
+    }
+    
+    if (step === 'FACE_CHECK') {
+      // Wajah harus tegak (yaw < 8 derajat)
+      if (Math.abs(yaw) < 8) {
+        setStep('READY');
+      }
+    }
+  });
+
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    
+    const now = Date.now();
+    if (now - lastProcessedTime.current < 200) return; // Throttling 200ms
+    lastProcessedTime.current = now;
+
+    const faces = detectFaces(frame);
+    if (faces.length > 0) {
+      updateLivenessLogic(true, faces[0].yawAngle);
+    } else {
+      updateLivenessLogic(false, 0);
+    }
+  }, [detectFaces, step]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -53,46 +132,30 @@ export default function CheckInScreen() {
   }, []);
 
   const initSetup = async () => {
-    // 1. Izin Kamera
-    if (!permission?.granted) {
-      await requestPermission();
-    }
-
-    // 2. Izin & Cek Lokasi
+    if (!hasPermission) await requestPermission();
     const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
     if (locStatus === 'granted') {
-      try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        setLocation(loc);
-        
-        // 3. Validasi Area via API
-        const token = authStore.getState().token;
-        if (token) {
-          const checkLocResult = await attendanceService.checkUserLocation(
-            token,
-            loc.coords.latitude,
-            loc.coords.longitude
-          );
-          setArea(checkLocResult.area || "Area Terdeteksi");
-        }
-      } catch (e) {
-        console.log("Location error:", e);
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setLocation(loc);
+      const token = authStore.getState().token;
+      if (token) {
+        const res = await attendanceService.checkUserLocation(token, loc.coords.latitude, loc.coords.longitude);
+        setArea(res.area || "Area Terdeteksi");
       }
-    } else {
-      Alert.alert("Izin Lokasi", "Aplikasi membutuhkan lokasi untuk validasi absen.");
     }
   };
 
   const takePicture = async () => {
-    if (cameraRef) {
+    if (step !== 'READY' || !isFaceDetected) return;
+    if (camera.current) {
       setIsLoading(true);
       try {
-        const res = await cameraRef.takePictureAsync({ 
-          quality: 0.7,
-          skipMetadata: true 
+        const file = await camera.current.takePhoto({ 
+          flash: 'off',
+          enableShutterSound: true
         });
-        setPhoto(res.uri);
-      } catch (error) {
+        setPhoto(`file://${file.path}`);
+      } catch (e) {
         Alert.alert("Error", "Gagal mengambil foto");
       } finally {
         setIsLoading(false);
@@ -101,95 +164,71 @@ export default function CheckInScreen() {
   };
 
   const submitAttendance = async () => {
-    if (!photo || !location) {
-      Alert.alert("Peringatan", "Foto dan lokasi diperlukan.");
-      return;
-    }
-
-    // Deteksi fake GPS
-    if (location.mocked) {
-      Alert.alert("Fake GPS terdeteksi!", "Silakan matikan aplikasi fake GPS sebelum absen.");
-      return;
-    }
-
+    if (!photo || !location) return;
     setIsLoading(true);
     try {
-      const userId = authStore.getState().user?.id;
-      const token = authStore.getState().token;
-
-      if (!userId || !token) throw new Error("Sesi berakhir");
-
+      const { user, token } = authStore.getState();
       const payload = {
-        userId,
+        userId: user?.id,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
-        bukti: { 
-          uri: photo, 
-          type: 'image/jpeg', 
-          name: 'attendance.jpg' 
-        },
-        token: token,
-        notes: statusType === 'checkout' ? notes : undefined,
+        bukti: { uri: photo, type: 'image/jpeg', name: 'attendance.jpg' },
+        token: token!,
+        notes: statusType === 'checkout' ? params.notes : undefined,
       };
-
       const result = statusType === 'checkin' 
         ? await attendanceService.checkIn(payload)
         : await attendanceService.checkOut(payload);
 
       if (result.success) {
-        Alert.alert("Berhasil", "Data absensi Anda telah terkirim.", [
-          { text: "Kembali", onPress: () => router.back() }
-        ]);
-      } else {
-        Alert.alert("Gagal", result.message || "Terjadi kesalahan server");
+        Alert.alert("Berhasil", "Absensi terkirim", [{ text: "OK", onPress: () => router.back() }]);
       }
-    } catch (error) {
-      Alert.alert("Error", "Gagal mengirim data. Coba lagi.");
+    } catch (e) {
+      Alert.alert("Error", "Gagal mengirim data.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (!permission?.granted) {
-    return (
-      <View style={styles.center}>
-        <Ionicons name="camera-outline" size={60} color="#6366f1" />
-        <Text style={styles.permissionText}>Akses kamera diperlukan</Text>
-        <TouchableOpacity onPress={requestPermission} style={styles.permissionBtn}>
-          <Text style={styles.permissionBtnText}>Izinkan Kamera</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const animatedBorderStyle = useAnimatedStyle(() => {
+    const rotate = interpolate(shakeProgress.value, [0, 1], [0, 360]);
+    const isCompleted = step === 'READY' || step === 'FACE_CHECK';
+    const activeColor = step === 'READY' ? COLORS.SUCCESS : COLORS.PRIMARY;
+
+    return {
+      transform: [{ rotate: `${rotate}deg` }],
+      borderColor: activeColor,
+      borderTopColor: activeColor,
+      borderRightColor: isCompleted ? activeColor : 'transparent',
+      borderBottomColor: isCompleted ? activeColor : 'transparent',
+      borderLeftColor: isCompleted ? activeColor : 'transparent',
+    };
+  });
+
+  if (!hasPermission) return null;
 
   return (
     <View style={styles.mainContainer}>
       <StatusBar barStyle="dark-content" />
       <Stack.Screen options={{ headerShown: false }} />
       
-      {/* NAVBAR */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backCircle}>
-          <Ionicons name="close" size={24} color="#1E293B" />
+          <Ionicons name="close" size={24} color={COLORS.TEXT} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{statusType === 'checkin' ? 'Check In Presensi' : 'Check Out Presensi'}</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollBody}>
-        
-        {/* INFO AREA CARD */}
         <View style={styles.areaCard}>
-          <View style={styles.areaIcon}>
-            <Ionicons name="location" size={20} color="#6366f1" />
-          </View>
-          <View>
-            <Text style={styles.areaLabel}>LOKASI SAAT INI</Text>
-            <Text style={styles.areaName}>{area || "Memverifikasi Lokasi..."}</Text>
+          <Ionicons name="location" size={20} color={COLORS.PRIMARY} />
+          <View style={{ marginLeft: 12 }}>
+            <Text style={styles.areaLabel}>LOKASI ANDA</Text>
+            <Text style={styles.areaName}>{area || "Mencari Lokasi..."}</Text>
           </View>
         </View>
 
-        {/* TIME DISPLAY */}
         <View style={styles.timeSection}>
           <Text style={styles.timeText}>
             {currentTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
@@ -197,60 +236,68 @@ export default function CheckInScreen() {
           <Text style={styles.dateText}>{currentTime.toLocaleDateString('id-ID', { dateStyle: 'full' })}</Text>
         </View>
 
-        {/* CAMERA SECTION (4:3 Ratio) */}
-        <View style={[styles.cameraBox, { height: cameraHeight }]}>
-          {!photo ? (
-            <CameraView 
-              ref={(ref) => setCameraRef(ref)} 
-              style={StyleSheet.absoluteFill} 
-              facing={facing}
-            >
-              <View style={styles.cameraOverlay}>
-                <View style={styles.guideFrame} />
-              </View>
-              <TouchableOpacity style={styles.flipBtn} onPress={() => setFacing(f => f ==='front'?'back':'front')}>
-                <Ionicons name="camera-reverse" size={26} color="#FFF" />
-              </TouchableOpacity>
-            </CameraView>
-          ) : (
-            <View style={{ flex: 1 }}>
-              <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-              <TouchableOpacity style={styles.retakeBtn} onPress={() => setPhoto(null)}>
-                <Ionicons name="refresh" size={18} color="#FFF" />
-                <Text style={styles.retakeText}>Ambil Ulang</Text>
-              </TouchableOpacity>
+        <View style={styles.cameraWrapper}>
+          <View style={styles.cameraOuterBorder}>
+            <Animated.View style={[styles.progressRing, animatedBorderStyle]} />
+            <View style={styles.cameraCircle}>
+              {!photo ? (
+                device && (
+                  <>
+                    <Camera
+                      ref={camera}
+                      style={StyleSheet.absoluteFill}
+                      device={device}
+                      format={format}
+                      fps={30}
+                      isActive={true}
+                      photo={true}
+                      frameProcessor={frameProcessor}
+                      pixelFormat="yuv"
+                    />
+                    <View style={styles.instructionOverlay}>
+                      <Text style={styles.instructionText}>
+                        {!isFaceDetected ? "WAJAH TIDAK TERDETEKSI" : 
+                         step === 'SHAKE' ? "GELENGKAN KEPALA" : 
+                         step === 'FACE_CHECK' ? "HADAP DEPAN" : "SIAP!"}
+                      </Text>
+                    </View>
+                  </>
+                )
+              ) : (
+                <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              )}
             </View>
+          </View>
+
+          {photo && (
+            <TouchableOpacity style={styles.retakeBtn} onPress={() => {setPhoto(null); setStep('SHAKE'); shakeProgress.value = 0;}}>
+              <Ionicons name="refresh" size={18} color="#FFF" />
+              <Text style={styles.retakeText}>Ambil Ulang</Text>
+            </TouchableOpacity>
           )}
         </View>
 
-        {/* NOTES (Checkout Only) */}
-        {statusType === 'checkout' && (
-          <View style={styles.noteSection}>
-            <Text style={styles.labelCaps}>Laporan Kerja</Text>
-            <TextInput 
-              placeholder="Tuliskan ringkasan kerja hari ini..."
-              multiline
-              value={notes}
-              onChangeText={setNotes}
-              style={styles.inputNote}
-            />
-          </View>
-        )}
+        <View style={styles.statusBox}>
+           <Text style={[styles.statusTitle, { color: isFaceDetected && step === 'READY' ? COLORS.SUCCESS : COLORS.PRIMARY }]}>
+             {!isFaceDetected ? "DEKATKAN WAJAH KE KAMERA" : step === 'READY' ? "VERIFIKASI BERHASIL" : "VALIDASI ANTI-SPOOFING"}
+           </Text>
+        </View>
       </ScrollView>
 
-      {/* FOOTER BUTTON */}
       <View style={styles.footer}>
         <TouchableOpacity 
           activeOpacity={0.8}
           onPress={photo ? submitAttendance : takePicture}
-          style={[styles.mainBtn, photo ? styles.btnSuccess : styles.btnPrimary, isLoading && styles.btnDisabled]}
-          disabled={isLoading}
+          style={[
+            styles.mainBtn, 
+            photo ? styles.btnSuccess : (step === 'READY' && isFaceDetected ? styles.btnPrimary : styles.btnDisabled),
+            isLoading && styles.btnDisabled
+          ]}
+          disabled={isLoading || (!photo && (step !== 'READY' || !isFaceDetected))}
         >
-          {isLoading ? (
-            <ActivityIndicator color="#FFF" />
-          ) : (
+          {isLoading ? <ActivityIndicator color="#FFF" /> : (
             <Text style={styles.mainBtnText}>
-              {photo ? "KIRIM ABSENSI SEKARANG" : "AMBIL FOTO PRESENSI"}
+              {photo ? "KIRIM DATA ABSENSI" : "AMBIL FOTO PRESENSI"}
             </Text>
           )}
         </TouchableOpacity>
@@ -261,42 +308,30 @@ export default function CheckInScreen() {
 
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#FFF' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 15 },
   backCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700', color: '#1E293B' },
-  
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700', color: COLORS.TEXT },
   scrollBody: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 120 },
-  
   areaCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20 },
-  areaIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  areaLabel: { fontSize: 10, color: '#64748B', fontWeight: '800' },
-  areaName: { fontSize: 15, color: '#1E293B', fontWeight: '700' },
-
-  timeSection: { alignItems: 'center', marginBottom: 25 },
-  timeText: { fontSize: 52, fontWeight: '800', color: '#1E293B' },
-  dateText: { fontSize: 14, color: '#94A3B8', fontWeight: '500' },
-
-  cameraBox: { width: '100%', borderRadius: 30, overflow: 'hidden', backgroundColor: '#000', elevation: 10 },
-  cameraOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  guideFrame: { width: '75%', height: '70%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)', borderRadius: 100, borderStyle: 'dashed' },
-  flipBtn: { position: 'absolute', bottom: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', padding: 12, borderRadius: 20 },
-  
-  retakeBtn: { position: 'absolute', bottom: 20, alignSelf: 'center', backgroundColor: '#EF4444', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center' },
+  areaLabel: { fontSize: 10, color: COLORS.SUBTEXT, fontWeight: '800' },
+  areaName: { fontSize: 14, color: COLORS.TEXT, fontWeight: '700' },
+  timeSection: { alignItems: 'center', marginBottom: 20 },
+  timeText: { fontSize: 48, fontWeight: '800', color: COLORS.TEXT },
+  dateText: { fontSize: 14, color: COLORS.SUBTEXT, fontWeight: '500' },
+  cameraWrapper: { width: '100%', alignItems: 'center', marginVertical: 10 },
+  cameraOuterBorder: { width: cameraSize + 22, height: cameraSize + 22, justifyContent: 'center', alignItems: 'center' },
+  progressRing: { position: 'absolute', width: cameraSize + 14, height: cameraSize + 14, borderRadius: (cameraSize + 14) / 2, borderWidth: 6 },
+  cameraCircle: { width: cameraSize, height: cameraSize, borderRadius: cameraSize / 2, overflow: 'hidden', backgroundColor: '#000', borderWidth: 4, borderColor: COLORS.WHITE },
+  instructionOverlay: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center' },
+  instructionText: { color: '#FFF', fontSize: 10, fontWeight: '800', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+  statusBox: { alignItems: 'center', marginTop: 15 },
+  statusTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  retakeBtn: { position: 'absolute', bottom: -10, alignSelf: 'center', backgroundColor: COLORS.DANGER, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center', zIndex: 10 },
   retakeText: { color: '#FFF', fontWeight: '700', fontSize: 13, marginLeft: 8 },
-
-  noteSection: { marginTop: 20, backgroundColor: '#F8FAFC', padding: 20, borderRadius: 25 },
-  labelCaps: { fontSize: 11, fontWeight: '800', color: '#94A3B8', marginBottom: 10, textTransform: 'uppercase' },
-  inputNote: { fontSize: 15, color: '#1E293B', minHeight: 60, textAlignVertical: 'top' },
-
   footer: { position: 'absolute', bottom: 0, width: '100%', padding: 20, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9' },
-  mainBtn: { height: 62, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 4 },
+  mainBtn: { height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   btnPrimary: { backgroundColor: '#1E293B' },
-  btnSuccess: { backgroundColor: '#6366F1' },
-  btnDisabled: { backgroundColor: '#94A3B8' },
-  mainBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800', letterSpacing: 1 },
-
-  permissionText: { marginTop: 20, fontSize: 16, color: '#64748B', fontWeight: '600' },
-  permissionBtn: { marginTop: 20, backgroundColor: '#6366F1', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 20 },
-  permissionBtnText: { color: '#FFF', fontWeight: '700' }
+  btnSuccess: { backgroundColor: COLORS.PRIMARY },
+  btnDisabled: { backgroundColor: '#CBD5E1' },
+  mainBtnText: { color: '#FFF', fontSize: 14, fontWeight: '800', letterSpacing: 1 },
 });

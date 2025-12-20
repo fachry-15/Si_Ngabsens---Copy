@@ -3,7 +3,8 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      'react-native-reanimated/plugin', // WAJIB ada di baris paling bawah
+      'react-native-worklets-core/plugin', // Tambahkan ini untuk mendukung Vision Camera
+      'react-native-reanimated/plugin',    // Tetap di baris paling bawah
     ],
   };
 };

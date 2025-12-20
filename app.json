@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fachry1101.Si_Ngabsens"
     },
     "android": {
       "adaptiveIcon": {
@@ -41,14 +42,29 @@
         }
       ],
       "expo-font",
-      "react-native-vision-camera"
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Si_Ngabsens membutuhkan akses kamera untuk verifikasi wajah saat presensi.",
+          "enableMicrophonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "assetBundlePatterns": [
-      "assets/fonts/*"
+      "assets/fonts/*",
+      "**/*"
     ],
     "extra": {
       "router": {},
