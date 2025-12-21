@@ -4,6 +4,7 @@ import React from 'react';
 import BottomNavigation from '@/components/BottomNavigation';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import Toast from 'react-native-toast-message';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -49,6 +50,7 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
+      <Toast />
     </>
   );
 }

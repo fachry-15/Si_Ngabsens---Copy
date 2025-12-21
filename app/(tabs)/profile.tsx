@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import CustomModal from '../../components/CustomModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { authStore } from '../../store/authStore';
 
@@ -36,21 +37,23 @@ export default function ProfileScreen() {
     return unsubscribe;
   }, []);
 
-  const handleLogout = async () => {
-    Alert.alert(
-      "Konfirmasi Keluar",
-      "Apakah Anda yakin ingin keluar dari akun ini?",
-      [
-        { text: "Batal", style: "cancel" },
-        { 
-          text: "Ya, Keluar", 
-          onPress: async () => {
-            await authStore.logout();
-            router.replace('/login');
-          },
-          style: 'destructive'
-        },
-      ]
+  const [modal, setModal] = useState<{visible: boolean, type?: 'success' | 'error' | 'info', title: string, message: string, onConfirm?: () => void}>({visible: false, type: 'info', title: '', message: ''});
+  const showModal = (type: 'success' | 'error' | 'info', title: string, message: string, onConfirm?: () => void) => {
+    setModal({ visible: true, type, title, message, onConfirm });
+  };
+  const hideModal = () => {
+    setModal(m => ({ ...m, visible: false }));
+    if (modal.onConfirm) modal.onConfirm();
+  };
+  const handleLogout = () => {
+    showModal(
+      'info',
+      'Konfirmasi Keluar',
+      'Apakah Anda yakin ingin keluar dari akun ini?',
+      async () => {
+        await authStore.logout();
+        router.replace('/login');
+      }
     );
   };
   
@@ -75,11 +78,20 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollViewContent} 
-      >
+    <>
+      <CustomModal
+        visible={modal.visible}
+        type={modal.type}
+        title={modal.title}
+        message={modal.message}
+        onClose={hideModal}
+        confirmText={modal.type === 'info' ? 'Ya, Keluar' : 'OK'}
+      />
+      <SafeAreaView style={styles.container}>
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollViewContent} 
+        >
         {/* Header Section */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profil</Text>
@@ -135,10 +147,11 @@ export default function ProfileScreen() {
         </TouchableOpacity>
         
         <Text style={styles.versionText}>Versi Aplikasi 1.0.0</Text>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </>
   );
-}
+} // <--- BARIS INI TADI KURANG / HILANG
 
 // Sub-component for Clean Info Items
 const InfoItem = ({ icon, label, value, isLast }: any) => (

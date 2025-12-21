@@ -29,11 +29,22 @@ const COLORS = {
 };
 
 export default function HomeScreen() {
-  const [showNotesModal, setShowNotesModal] = useState(false);
-  const [notes, setNotes] = useState('');
+    // Helper: parse backend time string as local (WIB) time, not UTC
+    function parseLocalDateTime(str) {
+      if (!str) return null;
+      // Accepts 'YYYY-MM-DD HH:mm:ss' or 'YYYY-MM-DDTHH:mm:ss'
+      let s = str.replace('T', ' ');
+      const [datePart, timePart] = s.split(' ');
+      if (!datePart || !timePart) return null;
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = timePart.split(':').map(Number);
+      // JS month is 0-based
+      return new Date(year, month - 1, day, hour, minute, second || 0);
+    }
+  // Removed unused: showNotesModal, setShowNotesModal, notes, setNotes
   const router = useRouter();
   const [user, setUser] = useState(authStore.getState().user);
-  const [loading, setLoading] = useState(true);
+  // Removed unused: loading, setLoading
   const [refreshing, setRefreshing] = useState(false);
 
   const [todayAttendance, setTodayAttendance] = useState({
@@ -60,13 +71,19 @@ export default function HomeScreen() {
   // Format Waktu: HH:mm
   const formatTime = (timeString: string | null): string => {
     if (!timeString) return '--:--';
-    const date = new Date(timeString);
-    if (isNaN(date.getTime())) {
-        const time = timeString.includes('T') ? timeString.split('T')[1] : timeString;
-        const [hours, minutes] = time.split(':');
-        return `${hours}:${minutes}`;
+    // Display time as sent from backend, without local timezone conversion
+    // Accepts ISO or 'HH:mm:ss' or 'HH:mm' format
+    let time = timeString;
+    if (timeString.includes('T')) {
+      // ISO string: split date and time
+      time = timeString.split('T')[1];
     }
-    return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+    // Remove seconds if present
+    const [hours, minutes] = time.split(':');
+    if (hours && minutes) {
+      return `${hours}:${minutes}`;
+    }
+    return timeString;
   };
 
   // Format Tanggal Lengkap (Multi-day support)
@@ -96,16 +113,15 @@ export default function HomeScreen() {
     return { bg: COLORS.WARNING_LIGHT, text: COLORS.WARNING };
   };
 
-  const loadAttendanceData = async () => {
+  const loadAttendanceData = React.useCallback(async () => {
     const authState = authStore.getState();
     if (!authState.token || !authState.user?.id) return;
     try {
-      if (!refreshing) setLoading(true);
       const [todayResponse, historyData, shiftData, overtimeResponse] = await Promise.all([
         attendanceService.getTodayAttendance(authState.token, authState.user.id),
         attendanceService.getAttendanceHistory(authState.token, authState.user.id, 5),
-        masterControlService.getTodayShift(authState.token),
-        attendanceService.getOvertimeData(authState.token, authState.user.id)
+        masterControlService.getTodayShift(authState.token || ''),
+        attendanceService.getOvertimeData(authState.token)
       ]);
 
       if (todayResponse.data) setTodayAttendance(todayResponse.data);
@@ -113,25 +129,40 @@ export default function HomeScreen() {
       setTodayShift(shiftData);
       
       if (overtimeResponse.success && overtimeResponse.data && overtimeResponse.data.length > 0) {
-        // Ambil data lembur terbaru yang statusnya bukan rejected (opsional)
-        setOvertimeData(overtimeResponse.data[0]);
+        // Ambil data lembur terbaru yang statusnya bukan rejected
+        // Filter lembur: hanya tampilkan jika waktu sekarang di antara start dan end
+        const now = new Date();
+        // Cari lembur terbaru yang statusnya bukan rejected
+        const validOvertime = overtimeResponse.data.find(item => !(item.status && item.status.toLowerCase().includes('reject')));
+        if (validOvertime) {
+          const start = parseLocalDateTime(validOvertime.start_time);
+          const end = parseLocalDateTime(validOvertime.end_time);
+          if (start && end && now >= start && now <= end) {
+            setOvertimeData(validOvertime);
+          } else {
+            setOvertimeData(null);
+          }
+        } else {
+          setOvertimeData(null);
+        }
       } else {
         setOvertimeData(null);
       }
     } catch (error) {
       console.error("Load Data Error:", error);
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  useFocusEffect(useCallback(() => { loadAttendanceData(); }, []));
+  useFocusEffect(
+    useCallback(() => { loadAttendanceData(); }, [loadAttendanceData])
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadAttendanceData();
-  }, []);
+  }, [loadAttendanceData]);
 
   const handleCheckOut = async () => {
     if (todayAttendance.hasCheckedOut) return;

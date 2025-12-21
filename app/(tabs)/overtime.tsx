@@ -54,21 +54,42 @@ export default function OvertimeScheduleScreen() {
   }, []);
 
   const formatFullDateTime = (isoString: string) => {
-    const date = new Date(isoString);
+    // Display date and time as sent from backend, without local timezone conversion
+    // Accepts ISO or 'YYYY-MM-DDTHH:mm:ss' or 'YYYY-MM-DD HH:mm:ss'
+    let datePart = isoString;
+    let timePart = '';
+    if (isoString.includes('T')) {
+      [datePart, timePart] = isoString.split('T');
+    } else if (isoString.includes(' ')) {
+      [datePart, timePart] = isoString.split(' ');
+    }
+    // Format date: 2025-12-22 -> 22 Des 2025
+    let dateDisplay = '-';
+    let dayName = '-';
+    if (datePart && datePart.includes('-')) {
+      const [year, month, day] = datePart.split('-');
+      if (year && month && day) {
+        const dateObj = new Date(`${year}-${month}-${day}`);
+        dateDisplay = dateObj.toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
+        dayName = dateObj.toLocaleDateString('id-ID', { weekday: 'long' });
+      }
+    }
+    // Format time: HH:mm:ss or HH:mm
+    let timeDisplay = '--:--';
+    if (timePart) {
+      const [hours, minutes] = timePart.split(':');
+      if (hours && minutes) {
+        timeDisplay = `${hours}:${minutes}`;
+      }
+    }
     return {
-      // Contoh: 22 Des 2025
-      dateDisplay: date.toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }),
-      // Contoh: 05:28
-      timeDisplay: date.toLocaleTimeString('id-ID', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).replace('.', ':'),
-      dayName: date.toLocaleDateString('id-ID', { weekday: 'long' }),
+      dateDisplay,
+      timeDisplay,
+      dayName,
     };
   };
 
