@@ -11,7 +11,7 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
 import Animated, {
     interpolate,
@@ -24,15 +24,17 @@ import Animated, {
 import {
     Camera,
     useCameraDevice,
-    useCameraFormat,
     useCameraPermission,
     useFrameProcessor
 } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets } from 'react-native-worklets-core';
+import { useTensorflowModel } from 'react-native-fast-tflite';
+import { useResizePlugin } from 'vision-camera-resize-plugin';
 
 import CustomModal from '../components/CustomModal';
 import { attendanceService } from '../services/attendanceService';
+import { getUserFaceVector } from '../services/faceVectorService';
 import { authStore } from '../store/authStore';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -48,415 +50,306 @@ const COLORS = {
     LIGHT_BG: '#F8FAFC'
 };
 
-// Fungsi point-in-polygon (Ray-casting algorithm)
-function isPointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
-    let [x, y] = point;
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-        let [xi, yi] = polygon[i];
-        let [xj, yj] = polygon[j];
-        let intersect = ((yi > y) !== (yj > y)) &&
-            (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-10) + xi);
-        if (intersect) inside = !inside;
-    }
-    return inside;
-}
-
-/**
- * Komponen Loading Lokasi yang Modern
- */
-function LocationLoadingView() {
-    const pulseValue = useSharedValue(1);
-    const progressValue = useSharedValue(0);
-
-    useEffect(() => {
-        pulseValue.value = withRepeat(
-            withSequence(withTiming(1.2, { duration: 800 }), withTiming(1, { duration: 800 })),
-            -1,
-            true
-        );
-        progressValue.value = withRepeat(
-            withTiming(1, { duration: 2000 }),
-            -1,
-            false
-        );
-    }, []);
-
-    const animatedPulse = useAnimatedStyle(() => ({
-        transform: [{ scale: pulseValue.value }],
-        opacity: interpolate(pulseValue.value, [1, 1.2], [1, 0.5])
-    }));
-
-    const animatedProgress = useAnimatedStyle(() => ({
-        width: `${progressValue.value * 100}%`
-    }));
-
-    return (
-        <View style={styles.loadingContainer}>
-            <View style={styles.loadingCard}>
-                <View style={styles.iconContainer}>
-                    <Animated.View style={[styles.pulseCircle, animatedPulse]} />
-                    <View style={styles.mainCircle}>
-                        <Ionicons name="location" size={32} color={COLORS.PRIMARY} />
-                    </View>
-                </View>
-                
-                <Text style={styles.loadingTitle}>Memverifikasi Lokasi</Text>
-                <Text style={styles.loadingSubtitle}>
-                    Mohon tunggu sebentar, kami sedang memastikan posisi Anda akurat.
-                </Text>
-
-                <View style={styles.progressBarBg}>
-                    <Animated.View style={[styles.progressBarFill, animatedProgress]} />
-                </View>
-
-                <View style={styles.loadingFooter}>
-                    <ActivityIndicator size="small" color={COLORS.SUBTEXT} />
-                    <Text style={styles.loadingFooterText}>Mencari Sinyal GPS...</Text>
-                </View>
-            </View>
-        </View>
-    );
-}
-
 export default function CheckInScreen() {
     const router = useRouter();
     const params = useLocalSearchParams();
     const statusType = params.status as string;
 
-    const [modal, setModal] = useState<{ visible: boolean, type?: 'success' | 'error' | 'info', title: string, message: string, onClose?: () => void }>({
-        visible: false,
-        type: 'info',
-        title: '',
-        message: ''
-    });
+    const [userVector, setUserVector] = useState<number[] | null>(null);
+    const [similarity, setSimilarity] = useState<number>(0);
+    const [faceVerified, setFaceVerified] = useState(false);
+    
+    const tflite = useTensorflowModel(require('../assets/models/mobile_face_net.tflite'));
+    const model = tflite.model;
+    const { resize } = useResizePlugin();
+
+    const [modal, setModal] = useState({ visible: false, type: 'info' as any, title: '', message: '', onClose: () => {} });
     const [checkingLocation, setCheckingLocation] = useState(true);
-
-    const showModal = (type: 'success' | 'error' | 'info', title: string, message: string, onClose?: () => void) => {
-        setModal({ visible: true, type, title, message, onClose });
-    };
-
-    const hideModal = () => {
-        setModal(m => ({ ...m, visible: false }));
-        if (modal.onClose) modal.onClose();
-    };
+    const [isFaceDetected, setIsFaceDetected] = useState(false);
+    const [step, setStep] = useState<'SHAKE' | 'FACE_CHECK' | 'READY'>('SHAKE');
+    const [photo, setPhoto] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [areaName, setAreaName] = useState('');
+    const [location, setLocation] = useState<Location.LocationObject | null>(null);
+    
+    const camera = useRef<Camera>(null);
+    const lastProcessedTime = useRef(0);
+    const lastSimValue = useRef(0); 
+    const isProcessingFace = useSharedValue(false);
+    const shakeProgress = useSharedValue(0);
 
     const device = useCameraDevice('front');
     const { hasPermission, requestPermission } = useCameraPermission();
-    const camera = useRef<Camera>(null);
+    const { detectFaces } = useFaceDetector({ performanceMode: 'fast' });
 
-    const format = useCameraFormat(device, [
-        { fps: 30 },
-        { videoResolution: { width: 1280, height: 720 } },
-        { pixelFormat: 'yuv' }
-    ]);
+    useEffect(() => {
+        initSetup();
+        (async () => {
+            const res = await getUserFaceVector();
+            if (res && res.data?.vector) {
+                const vec = typeof res.data.vector === 'string' ? JSON.parse(res.data.vector) : res.data.vector;
+                setUserVector(vec);
+            }
+        })();
+    }, []);
 
-    const lastProcessedTime = useRef(0);
-    const { detectFaces } = useFaceDetector({
-        performanceMode: 'fast',
-        classificationMode: 'none',
+    const initSetup = async () => {
+        if (!hasPermission) await requestPermission();
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+            setCheckingLocation(false);
+            setModal({ visible: true, type: 'error', title: 'Izin Ditolak', message: 'Akses GPS diperlukan.', onClose: () => router.back() });
+            return;
+        }
+
+        try {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+            setLocation(loc);
+            const token = authStore.getState().token;
+            if (token) {
+                const res = await attendanceService.checkUserLocation(token, loc.coords.latitude, loc.coords.longitude);
+                if (res.match === true) {
+                    setAreaName(res.area || "Area Terverifikasi");
+                    setCheckingLocation(false);
+                } else {
+                    setCheckingLocation(false);
+                    setModal({ visible: true, type: 'error', title: 'Lokasi Salah', message: res.message || 'Anda diluar radius.', onClose: () => router.back() });
+                }
+            }
+        } catch (err) {
+            setCheckingLocation(false);
+            setModal({ visible: true, type: 'error', title: 'GPS Error', message: 'Gagal verifikasi lokasi.' });
+        }
+    };
+
+    // --- LOGIKA REAL-TIME SIMILARITY (PERBAIKAN DEADLOCK) ---
+    const onFaceMatched = Worklets.createRunOnJS((sim: number) => {
+        if (sim <= 0) {
+            lastSimValue.current = 0;
+            setSimilarity(0);
+            setFaceVerified(false);
+        } else {
+            // Langsung ambil nilai baru jika sebelumnya kosong (Cold Start Fix)
+            if (lastSimValue.current === 0) {
+                lastSimValue.current = sim;
+            } else {
+                // Smoothing sangat tipis agar tetap stabil tapi instan
+                lastSimValue.current = (lastSimValue.current * 0.05) + (sim * 0.95);
+            }
+            setSimilarity(lastSimValue.current);
+            setFaceVerified(lastSimValue.current > 0.70);
+        }
+        isProcessingFace.value = false;
     });
 
-    const [currentTime, setCurrentTime] = useState(new Date());
-    const [location, setLocation] = useState<Location.LocationObject | null>(null);
-    const [area, setArea] = useState<string>('');
-    const [photo, setPhoto] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-
-    const [step, setStep] = useState<'SHAKE' | 'FACE_CHECK' | 'READY'>('SHAKE');
-    const [locationAllowed, setLocationAllowed] = useState(true);
-    const [isFaceDetected, setIsFaceDetected] = useState(false);
-    const shakeProgress = useSharedValue(0);
-
-    const updateLivenessLogic = Worklets.createRunOnJS((detected: boolean, yaw: number) => {
+    const updateUIState = Worklets.createRunOnJS((detected: boolean, yaw: number) => {
         setIsFaceDetected(detected);
+        
         if (!detected) {
-            if (step !== 'READY') {
+            // Reset langkah jika wajah hilang agar tidak "nyangkut" di step tertentu
+            if (step !== 'SHAKE') {
                 setStep('SHAKE');
-                shakeProgress.value = withTiming(0);
+                shakeProgress.value = 0;
             }
             return;
         }
 
+        // Logika Liveness (Gerakan)
         if (step === 'SHAKE') {
-            const currentShake = Math.min(Math.abs(yaw) / 20, 1);
-            if (currentShake > shakeProgress.value) {
-                shakeProgress.value = withTiming(currentShake, { duration: 150 });
-            }
-            if (shakeProgress.value >= 0.95) setStep('FACE_CHECK');
-        }
-
-        if (step === 'FACE_CHECK') {
-            if (Math.abs(yaw) < 8) setStep('READY');
+            const progress = Math.min(Math.abs(yaw) / 20, 1);
+            if (progress > shakeProgress.value) shakeProgress.value = withTiming(progress);
+            if (shakeProgress.value >= 0.8) setStep('FACE_CHECK');
+        } else if (step === 'FACE_CHECK') {
+            // Menunggu wajah lurus (yaw mendekati 0)
+            if (Math.abs(yaw) < 6) setStep('READY');
         }
     });
 
     const frameProcessor = useFrameProcessor((frame) => {
         'worklet';
         const now = Date.now();
-        if (now - lastProcessedTime.current < 200) return;
+        if (now - lastProcessedTime.current < 120) return; // Lebih cepat (120ms)
         lastProcessedTime.current = now;
 
         const faces = detectFaces(frame);
+        
         if (faces.length > 0) {
-            updateLivenessLogic(true, faces[0].yawAngle);
-        } else {
-            updateLivenessLogic(false, 0);
-        }
-    }, [detectFaces, step]);
+            const face = faces[0];
+            updateUIState(true, face.yawAngle);
 
-    useEffect(() => {
-        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-        initSetup();
-        return () => clearInterval(timer);
-    }, []);
-
-    const initSetup = async () => {
-        if (!hasPermission) await requestPermission();
-        const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
-        if (locStatus === 'granted') {
-            try {
-                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-                setLocation(loc);
-                const token = authStore.getState().token;
-                if (token) {
-                    const res = await attendanceService.checkUserLocation(token, loc.coords.latitude, loc.coords.longitude);
-                    setArea(res.area || "Area Terdeteksi");
-                    if (res.match !== true) {
-                        setLocationAllowed(false);
-                        setCheckingLocation(false);
-                        showModal('error', 'Lokasi Tidak Sesuai', res.message || 'Lokasi kamu belum sesuai.', () => router.replace('/(tabs)'));
-                    } else {
-                        setLocationAllowed(true);
-                        setCheckingLocation(false);
+            // Selalu proses similarity selama model tersedia, tidak peduli step apa
+            if (model != null && userVector != null && !isProcessingFace.value) {
+                isProcessingFace.value = true;
+                
+                const resized = resize(frame, { 
+                    scale: { width: 112, height: 112 }, 
+                    pixelFormat: 'rgb', 
+                    dataType: 'float32' 
+                });
+                
+                const output = model.runSync([resized]);
+                
+                if (output && output.length > 0) {
+                    const currentVec = Array.from(output[0] as Float32Array);
+                    let dot = 0, normA = 0, normB = 0;
+                    for (let i = 0; i < currentVec.length; i++) {
+                        dot += currentVec[i] * userVector[i];
+                        normA += currentVec[i] * currentVec[i];
+                        normB += userVector[i] * userVector[i];
                     }
+                    const mag = Math.sqrt(normA) * Math.sqrt(normB);
+                    const sim = mag !== 0 ? dot / mag : 0;
+                    onFaceMatched(sim);
                 } else {
-                    setCheckingLocation(false);
+                    isProcessingFace.value = false;
                 }
-            } catch (err) {
-                setCheckingLocation(false);
-                showModal('error', 'GPS Error', 'Gagal mendapatkan lokasi. Pastikan GPS aktif.');
             }
         } else {
-            setCheckingLocation(false);
-            showModal('error', 'Izin Ditolak', 'Aplikasi butuh izin lokasi.');
+            updateUIState(false, 0);
+            onFaceMatched(0);
         }
-    };
+    }, [model, userVector, step]); // Re-bind jika step berubah
 
     const takePicture = async () => {
-        if (!locationAllowed || step !== 'READY' || !isFaceDetected) return;
-        if (camera.current) {
-            setIsLoading(true);
-            try {
-                const file = await camera.current.takePhoto({
-                    flash: 'off',
-                    enableShutterSound: true
-                });
-                setPhoto(`file://${file.path}`);
-            } catch (e) {
-                showModal('error', 'Gagal', 'Terjadi kesalahan saat mengambil foto');
-            } finally {
-                setIsLoading(false);
-            }
-        }
+        if (!isFaceDetected || !faceVerified || step !== 'READY') return;
+        try {
+            const file = await camera.current?.takePhoto({ flash: 'off' });
+            if (file) setPhoto(`file://${file.path}`);
+        } catch (e) { console.error(e); }
     };
 
-    const submitAttendance = async () => {
-        if (!locationAllowed || !photo || !location) return;
+    const handleFinalSubmit = async () => {
+        if (!photo || !location || !faceVerified) return;
         setIsLoading(true);
         try {
             const { user, token } = authStore.getState();
             const payload = {
-                userId: user?.id,
+                userId: user!.id,
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
-                bukti: { uri: photo, type: 'image/jpeg', name: 'attendance.jpg' },
+                bukti: { uri: photo, type: 'image/jpeg', name: 'attendance.jpg' } as any,
                 token: token!,
-                notes: statusType === 'checkout' ? params.notes : undefined,
+                notes: (params.notes as string) || ""
             };
-            const result = statusType === 'checkin'
-                ? await attendanceService.checkIn(payload)
-                : await attendanceService.checkOut(payload);
-
+            const result = statusType === 'checkin' ? await attendanceService.checkIn(payload) : await attendanceService.checkOut(payload);
             if (result.success) {
-                showModal('success', 'Berhasil', 'Presensi Anda telah berhasil dikirim', () => router.back());
-            } else {
-                showModal('error', 'Gagal', result.message || 'Terjadi kesalahan saat absensi');
+                setModal({ visible: true, type: 'success', title: 'Berhasil', message: 'Presensi telah tercatat.', onClose: () => router.replace('/(tabs)') });
             }
         } catch (e) {
-            showModal('error', 'Error', 'Mohon maaf, gagal mengirim data presensi');
-        } finally {
-            setIsLoading(false);
-        }
+            setModal({ visible: true, type: 'error', title: 'Gagal', message: 'Koneksi terganggu.' });
+        } finally { setIsLoading(false); }
     };
 
-    const animatedBorderStyle = useAnimatedStyle(() => {
-        const rotate = interpolate(shakeProgress.value, [0, 1], [0, 360]);
-        const isCompleted = step === 'READY' || step === 'FACE_CHECK';
-        const activeColor = step === 'READY' ? COLORS.SUCCESS : COLORS.PRIMARY;
+    const animatedBorderStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${interpolate(shakeProgress.value, [0, 1], [0, 360])}deg` }],
+        borderColor: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : COLORS.PRIMARY),
+    }));
 
-        return {
-            transform: [{ rotate: `${rotate}deg` }],
-            borderColor: activeColor,
-            borderTopColor: activeColor,
-            borderRightColor: isCompleted ? activeColor : 'transparent',
-            borderBottomColor: isCompleted ? activeColor : 'transparent',
-            borderLeftColor: isCompleted ? activeColor : 'transparent',
-        };
-    });
-
-    if (!hasPermission) return null;
-
-    if (checkingLocation) {
-        return <LocationLoadingView />;
-    }
+    if (checkingLocation) return <View style={styles.mainContainer}><ActivityIndicator size="large" color={COLORS.PRIMARY} /></View>;
 
     return (
-        <View style={{ flex: 1 }}>
-            <View style={styles.mainContainer}>
-                <StatusBar barStyle="dark-content" />
-                <Stack.Screen options={{ headerShown: false }} />
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.backCircle}>
-                        <Ionicons name="close" size={24} color={COLORS.TEXT} />
-                    </TouchableOpacity>
-                    <Text style={styles.headerTitle}>{statusType === 'checkin' ? 'Check In Presensi' : 'Check Out Presensi'}</Text>
-                    <View style={{ width: 40 }} />
-                </View>
-
-                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollBody}>
-                    <View style={styles.areaCard}>
-                        <Ionicons name="location" size={20} color={COLORS.PRIMARY} />
-                        <View style={{ marginLeft: 12 }}>
-                            <Text style={styles.areaLabel}>LOKASI ANDA</Text>
-                            <Text style={styles.areaName}>{area || "Mencari Lokasi..."}</Text>
-                        </View>
-                    </View>
-
-                    <View style={styles.timeSection}>
-                        <Text style={styles.timeText}>
-                            {currentTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                        </Text>
-                        <Text style={styles.dateText}>{currentTime.toLocaleDateString('id-ID', { dateStyle: 'full' })}</Text>
-                    </View>
-
-                    <View style={styles.cameraWrapper}>
-                        <View style={styles.cameraOuterBorder}>
-                            <Animated.View style={[styles.progressRing, animatedBorderStyle]} />
-                            <View style={styles.cameraCircle}>
-                                {!photo ? (
-                                    device && (
-                                        <>
-                                            <Camera
-                                                ref={camera}
-                                                style={StyleSheet.absoluteFill}
-                                                device={device}
-                                                format={format}
-                                                fps={30}
-                                                isActive={true}
-                                                photo={true}
-                                                frameProcessor={frameProcessor}
-                                                pixelFormat="yuv"
-                                            />
-                                            <View style={styles.instructionOverlay}>
-                                                <Text style={styles.instructionText}>
-                                                    {!isFaceDetected ? "WAJAH TIDAK TERDETEKSI" :
-                                                        step === 'SHAKE' ? "GELENGKAN KEPALA" :
-                                                            step === 'FACE_CHECK' ? "HADAP DEPAN" : "SIAP!"}
-                                                </Text>
-                                            </View>
-                                        </>
-                                    )
-                                ) : (
-                                    <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                                )}
-                            </View>
-                        </View>
-                        {photo && (
-                            <TouchableOpacity style={styles.retakeBtn} onPress={() => { setPhoto(null); setStep('SHAKE'); shakeProgress.value = 0; }}>
-                                <Ionicons name="refresh" size={18} color="#FFF" />
-                                <Text style={styles.retakeText}>Ambil Ulang</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
-                    <View style={styles.statusBox}>
-                        <Text style={[styles.statusTitle, { color: isFaceDetected && step === 'READY' ? COLORS.SUCCESS : COLORS.PRIMARY }]}>
-                            {!isFaceDetected ? "DEKATKAN WAJAH KE KAMERA" : step === 'READY' ? "VERIFIKASI BERHASIL" : "VALIDASI ANTI-SPOOFING"}
-                        </Text>
-                    </View>
-                </ScrollView>
-
-                <View style={styles.footer}>
-                    <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={photo ? submitAttendance : takePicture}
-                        style={[
-                            styles.mainBtn,
-                            photo ? styles.btnSuccess : (step === 'READY' && isFaceDetected ? styles.btnPrimary : styles.btnDisabled),
-                            isLoading && styles.btnDisabled
-                        ]}
-                        disabled={isLoading || (!photo && (step !== 'READY' || !isFaceDetected))}
-                    >
-                        {isLoading ? <ActivityIndicator color="#FFF" /> : (
-                            <Text style={styles.mainBtnText}>
-                                {photo ? "KIRIM DATA ABSENSI" : "AMBIL FOTO PRESENSI"}
-                            </Text>
-                        )}
-                    </TouchableOpacity>
-                </View>
+        <View style={styles.mainContainer}>
+            <Stack.Screen options={{ headerShown: false }} />
+            <StatusBar barStyle="dark-content" />
+            
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => router.back()} style={styles.backCircle}>
+                    <Ionicons name="close" size={24} color={COLORS.TEXT} />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>Verifikasi Wajah</Text>
+                <View style={{ width: 40 }} />
             </View>
 
-            <CustomModal
-                visible={modal.visible}
-                type={modal.type}
-                title={modal.title}
-                message={modal.message}
-                onClose={hideModal}
-            />
+            <ScrollView contentContainerStyle={styles.scrollBody} bounces={false}>
+                <View style={styles.areaCard}>
+                    <Ionicons name="business" size={20} color={COLORS.PRIMARY} />
+                    <View style={{ marginLeft: 12 }}>
+                        <Text style={styles.areaLabel}>LOKASI TERDETEKSI</Text>
+                        <Text style={styles.areaName}>{areaName || "Mencari Lokasi..."}</Text>
+                    </View>
+                </View>
+
+                <View style={styles.cameraWrapper}>
+                    <View style={styles.cameraOuterBorder}>
+                        <Animated.View style={[styles.progressRing, animatedBorderStyle]} />
+                        <View style={styles.cameraCircle}>
+                            {!photo ? (
+                                <Camera ref={camera} style={StyleSheet.absoluteFill} device={device!} isActive={true} frameProcessor={frameProcessor} pixelFormat="yuv" photo={true} />
+                            ) : (
+                                <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} />
+                            )}
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.statusBox}>
+                    <Text style={[styles.statusTitle, { 
+                        color: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : COLORS.PRIMARY) 
+                    }]}>
+                        {!isFaceDetected ? "WAJAH TIDAK TERDETEKSI" :
+                         step === 'SHAKE' ? "GELENGKAN KEPALA PERLAHAN" :
+                         step === 'FACE_CHECK' ? "HADAP LURUS KE KAMERA" :
+                         faceVerified ? `WAJAH SESUAI (${(similarity * 100).toFixed(0)}%)` : 
+                         `WAJAH TIDAK COCOK (${(similarity * 100).toFixed(0)}%)`}
+                    </Text>
+                    
+                    {isFaceDetected && (
+                        <Text style={styles.scoreText}>
+                            Akurasi Real-time: {(similarity * 100).toFixed(1)}%
+                        </Text>
+                    )}
+                </View>
+            </ScrollView>
+
+            <View style={styles.footer}>
+                {photo ? (
+                    <View style={styles.btnRow}>
+                        <TouchableOpacity onPress={() => setPhoto(null)} style={[styles.mainBtn, styles.btnOutline]}>
+                            <Text style={[styles.mainBtnText, {color: COLORS.TEXT}]}>ULANGI</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={handleFinalSubmit} style={[styles.mainBtn, {flex: 2, backgroundColor: COLORS.PRIMARY}]}>
+                            {isLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.mainBtnText}>KIRIM</Text>}
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        onPress={takePicture}
+                        style={[styles.mainBtn, (isFaceDetected && faceVerified && step === 'READY') ? styles.btnSuccess : styles.btnDisabled]}
+                        disabled={!faceVerified || !isFaceDetected || step !== 'READY'}
+                    >
+                        <Text style={styles.mainBtnText}>
+                            {step === 'SHAKE' ? "GELENGKAN KEPALA" : step === 'FACE_CHECK' ? "HADAP LURUS" : "AMBIL FOTO"}
+                        </Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+
+            <CustomModal visible={modal.visible} type={modal.type} title={modal.title} message={modal.message} onClose={() => { setModal(m => ({ ...m, visible: false })); modal.onClose(); }} />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    mainContainer: { flex: 1, backgroundColor: '#FFF' },
-    // Styles Loading Lokasi
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', padding: 20 },
-    loadingCard: { width: '100%', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 24, padding: 30 },
-    iconContainer: { width: 100, height: 100, justifyContent: 'center', alignItems: 'center', marginBottom: 25 },
-    mainCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#F1FDF7', justifyContent: 'center', alignItems: 'center', zIndex: 2 },
-    pulseCircle: { position: 'absolute', width: 70, height: 70, borderRadius: 35, backgroundColor: COLORS.PRIMARY, zIndex: 1 },
-    loadingTitle: { fontSize: 20, fontWeight: '800', color: COLORS.TEXT, marginBottom: 12 },
-    loadingSubtitle: { fontSize: 14, color: COLORS.SUBTEXT, textAlign: 'center', lineHeight: 20, marginBottom: 30, paddingHorizontal: 20 },
-    progressBarBg: { width: '80%', height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden', marginBottom: 20 },
-    progressBarFill: { height: '100%', backgroundColor: COLORS.PRIMARY, borderRadius: 3 },
-    loadingFooter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    loadingFooterText: { fontSize: 12, fontWeight: '600', color: COLORS.SUBTEXT },
-    
-    // Header & Body
-    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 15 },
-    backCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-    headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700', color: COLORS.TEXT },
-    scrollBody: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 120 },
-    areaCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20 },
-    areaLabel: { fontSize: 10, color: COLORS.SUBTEXT, fontWeight: '800' },
-    areaName: { fontSize: 14, color: COLORS.TEXT, fontWeight: '700' },
-    timeSection: { alignItems: 'center', marginBottom: 20 },
-    timeText: { fontSize: 48, fontWeight: '800', color: COLORS.TEXT },
-    dateText: { fontSize: 14, color: COLORS.SUBTEXT, fontWeight: '500' },
-    cameraWrapper: { width: '100%', alignItems: 'center', marginVertical: 10 },
+    mainContainer: { flex: 1, backgroundColor: COLORS.LIGHT_BG },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 20 },
+    backCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', elevation: 2 },
+    headerTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.TEXT },
+    scrollBody: { paddingBottom: 150 },
+    areaCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', margin: 20, padding: 15, borderRadius: 15, elevation: 1 },
+    areaLabel: { fontSize: 10, color: COLORS.SUBTEXT, fontWeight: 'bold' },
+    areaName: { fontSize: 14, color: COLORS.TEXT, fontWeight: 'bold' },
+    cameraWrapper: { alignItems: 'center', marginTop: 10 },
     cameraOuterBorder: { width: cameraSize + 22, height: cameraSize + 22, justifyContent: 'center', alignItems: 'center' },
-    progressRing: { position: 'absolute', width: cameraSize + 14, height: cameraSize + 14, borderRadius: (cameraSize + 14) / 2, borderWidth: 6 },
+    progressRing: { position: 'absolute', width: cameraSize + 14, height: cameraSize + 14, borderRadius: (cameraSize + 14) / 2, borderWidth: 5 },
     cameraCircle: { width: cameraSize, height: cameraSize, borderRadius: cameraSize / 2, overflow: 'hidden', backgroundColor: '#000', borderWidth: 4, borderColor: COLORS.WHITE },
-    instructionOverlay: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center' },
-    instructionText: { color: '#FFF', fontSize: 10, fontWeight: '800', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-    statusBox: { alignItems: 'center', marginTop: 15 },
-    statusTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
-    retakeBtn: { position: 'absolute', bottom: -10, alignSelf: 'center', backgroundColor: COLORS.DANGER, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center', zIndex: 10 },
-    retakeText: { color: '#FFF', fontWeight: '700', fontSize: 13, marginLeft: 8 },
-    footer: { position: 'absolute', bottom: 0, width: '100%', padding: 20, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9' },
-    mainBtn: { height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-    btnPrimary: { backgroundColor: '#1E293B' },
-    btnSuccess: { backgroundColor: COLORS.PRIMARY },
-    btnDisabled: { backgroundColor: '#CBD5E1' },
-    mainBtnText: { color: '#FFF', fontSize: 14, fontWeight: '800', letterSpacing: 1 },
+    statusBox: { alignItems: 'center', marginTop: 25, paddingHorizontal: 30 },
+    statusTitle: { fontSize: 16, fontWeight: '800', textAlign: 'center' },
+    scoreText: { fontSize: 12, color: COLORS.SUBTEXT, marginTop: 5, fontWeight: '600' },
+    footer: { position: 'absolute', bottom: 0, width: '100%', padding: 25, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, elevation: 20 },
+    btnRow: { flexDirection: 'row', gap: 12 },
+    mainBtn: { height: 55, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    btnOutline: { flex: 1, borderWidth: 1, borderColor: '#CBD5E1' },
+    btnSuccess: { backgroundColor: COLORS.PRIMARY, width: '100%' },
+    btnDisabled: { backgroundColor: '#CBD5E1', width: '100%' },
+    mainBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800' }
 });
