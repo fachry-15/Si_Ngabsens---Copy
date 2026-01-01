@@ -1,17 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { 
-    Image, 
-    RefreshControl, 
-    ScrollView, 
-    StyleSheet, 
-    Text, 
-    TextInput, 
-    TouchableOpacity, 
-    View, 
+import {
     Dimensions,
-    StatusBar
+    Image,
+    RefreshControl,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AttendanceRecord, attendanceService } from '../../services/attendanceService';
@@ -19,9 +19,6 @@ import { getUserFaceVector } from '../../services/faceVectorService';
 import { masterControlService } from '../../services/masterControlService';
 import { authStore } from '../../store/authStore';
 
-const { width } = Dimensions.get('window');
-
-// Konfigurasi Font & Warna
 const FONT = {
     REGULAR: 'Fredoka-Regular',
     MEDIUM: 'Fredoka-Medium',
@@ -31,297 +28,213 @@ const FONT = {
 
 const COLORS = {
     PRIMARY: '#2b5597',
-    PRIMARY_LIGHT: '#EEF2FF',
+    PRIMARY_SOFT: '#EBF2FF',
     ACCENT: '#6366F1',
-    TEXT_MAIN: '#111827',
-    TEXT_SUB: '#6B7280',
+    TEXT_MAIN: '#1E293B',
+    TEXT_SUB: '#64748B',
     SUCCESS: '#10B981',
-    SUCCESS_LIGHT: '#D1FAE5',
     WARNING: '#F59E0B',
-    WARNING_LIGHT: '#FEF3C7',
-    BG: '#F9FAFB',
+    BG: '#F8FAFC',
     WHITE: '#FFFFFF',
+    BORDER: '#F1F5F9',
     DANGER: '#EF4444'
 };
-
-function isSameDay(dateA: Date, dateB: Date) {
-    return dateA.getFullYear() === dateB.getFullYear() &&
-           dateA.getMonth() === dateB.getMonth() &&
-           dateA.getDate() === dateB.getDate();
-}
 
 export default function HomeScreen() {
     const router = useRouter();
     const [user, setUser] = useState(authStore.getState().user);
     const [refreshing, setRefreshing] = useState(false);
-    const [showEarlyModal, setShowEarlyModal] = useState(false);
-    const [showFaceRegisterModal, setShowFaceRegisterModal] = useState(false); // State baru
-    const [earlyReason, setEarlyReason] = useState('');
-
+    const [showFaceRegisterModal, setShowFaceRegisterModal] = useState(false);
+    
     const [todayAttendance, setTodayAttendance] = useState({
         hasCheckedIn: false,
         hasCheckedOut: false,
         checkInTime: null as string | null,
         checkOutTime: null as string | null,
-        status: null as string | null,
     });
 
     const [recentHistory, setRecentHistory] = useState<AttendanceRecord[]>([]);
     const [todayShift, setTodayShift] = useState<any>(null);
     const [overtimeData, setOvertimeData] = useState<any>(null);
 
-    // Observer untuk update user jika ada perubahan profil
-    useEffect(() => {
-        const unsubscribe = authStore.subscribe((state) => setUser(state.user));
-        return unsubscribe;
-    }, []);
-
-    // Helper Fungsi
+    // --- Helper Functions ---
     const formatTime = (timeString: string | null) => {
         if (!timeString) return '--:--';
         let time = timeString.includes('T') ? timeString.split('T')[1] : timeString;
         const [hours, minutes] = time.split(':');
-        return hours && minutes ? `${hours}:${minutes}` : timeString;
+        return `${hours}:${minutes}`;
     };
 
-    const formatDateLabel = (dateString: string) => {
-        return new Date(dateString).toLocaleDateString('id-ID', {
-            weekday: 'long', day: 'numeric', month: 'long',
-        });
+    const formatDateSmall = (dateString: string) => {
+        return new Date(dateString).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
     };
 
-    /**
-     * LOGIKA UTAMA: Load Data & Cek Vektor Wajah
-     */
+    const isSameDay = (dateA: Date, dateB: Date) => {
+        return dateA.getUTCFullYear() === dateB.getUTCFullYear() &&
+               dateA.getUTCMonth() === dateB.getUTCMonth() &&
+               dateA.getUTCDate() === dateB.getUTCDate();
+    };
+
     const loadAttendanceData = useCallback(async () => {
         const authState = authStore.getState();
         if (!authState.token || !authState.user?.id) return;
-
         try {
             const [todayResponse, historyData, shiftData, overtimeResponse, faceVektorRes] = await Promise.all([
                 attendanceService.getTodayAttendance(authState.token, authState.user.id),
                 attendanceService.getAttendanceHistory(authState.token, authState.user.id, 5),
                 masterControlService.getTodayShift(authState.token || ''),
                 attendanceService.getOvertimeData(authState.token),
-                getUserFaceVector() // Memanggil endpoint show Anda
+                getUserFaceVector()
             ]);
 
-            // VALIDASI WAJAH: Jika response success: false, tampilkan modal
-            if (faceVektorRes && faceVektorRes.success === false) {
-                setShowFaceRegisterModal(true);
-            } else {
-                setShowFaceRegisterModal(false);
-            }
-
+            if (faceVektorRes?.success === false) setShowFaceRegisterModal(true);
             if (todayResponse.data) setTodayAttendance(todayResponse.data);
             setRecentHistory(historyData || []);
             setTodayShift(shiftData);
             
-            // Logic Overtime
             if (overtimeResponse.success && overtimeResponse.data?.length > 0) {
                 const today = new Date();
-                const validOvertime = overtimeResponse.data.find(item => {
-                    if (item.status?.toLowerCase().includes('reject')) return false;
-                    const start = new Date(item.start_time);
-                    return isSameDay(today, start);
+                const validOvertime = overtimeResponse.data.find((item: any) => {
+                    const status = (item.status || '').toLowerCase();
+                    if (status.includes('reject') || status.includes('cancel')) return false;
+                    return isSameDay(today, new Date(item.start_time));
                 });
                 setOvertimeData(validOvertime || null);
             }
-        } catch (error) {
-            console.error("Home Data Sync Error:", error);
-        } finally {
-            setRefreshing(false);
-        }
+        } catch (e) { console.error(e); } finally { setRefreshing(false); }
     }, []);
 
-    useFocusEffect(
-        useCallback(() => { loadAttendanceData(); }, [loadAttendanceData])
-    );
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        loadAttendanceData();
-    };
-
-    const handleCheckOut = async () => {
-        if (todayAttendance.hasCheckedOut) return;
-        const userShift = await masterControlService.getTodayShift(authStore.getState().token);
-        if (!userShift?.shift) return;
-        
-        if (!masterControlService.canCheckOut(userShift.shift)) {
-            setShowEarlyModal(true);
-        } else {
-            router.push('/check-in?status=checkout');
-        }
-    };
+    useFocusEffect(useCallback(() => { loadAttendanceData(); }, [loadAttendanceData]));
 
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
-
-            {/* 1. MODAL WAJIB DAFTAR WAJAH (Z-INDEX TINGGI) */}
-            {showFaceRegisterModal && (
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.iconCircleWarning}>
-                            <Ionicons name="scan-circle" size={50} color={COLORS.WARNING} />
-                        </View>
-                        <Text style={styles.modalTitle}>Biometrik Diperlukan</Text>
-                        <Text style={styles.modalDescription}>
-                            Sistem mendeteksi Anda belum mendaftarkan data wajah. Mohon lakukan pendaftaran untuk mulai melakukan presensi.
-                        </Text>
-                        
-                        <TouchableOpacity
-                            activeOpacity={0.8}
-                            onPress={() => router.push('/face-register')}
-                            style={styles.modalActionBtn}
-                        >
-                            <Text style={styles.modalActionText}>Daftar Wajah Sekarang</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            )}
-
-            {/* 2. MODAL EARLY CHECKOUT */}
-            {showEarlyModal && (
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContentSmall}>
-                        <Text style={styles.modalTitleSmall}>Check Out Lebih Awal</Text>
-                        <Text style={styles.modalDescriptionSmall}>Berikan alasan mengapa Anda mengakhiri shift lebih cepat.</Text>
-                        <TextInput
-                            value={earlyReason}
-                            onChangeText={setEarlyReason}
-                            placeholder="Contoh: Sakit / Urusan Mendadak"
-                            style={styles.textArea}
-                            multiline
-                        />
-                        <View style={styles.modalRowAction}>
-                            <TouchableOpacity onPress={() => setShowEarlyModal(false)}>
-                                <Text style={styles.btnCancelText}>Batal</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                onPress={() => {
-                                    setShowEarlyModal(false);
-                                    router.push(`/check-in?status=checkout&notes=${encodeURIComponent(earlyReason)}`);
-                                    setEarlyReason('');
-                                }}
-                                style={styles.btnConfirmSmall}
-                            >
-                                <Text style={styles.btnConfirmTextSmall}>Lanjut</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            )}
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.BG} />
 
             <ScrollView 
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.PRIMARY]} />}
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAttendanceData(); }} />}
                 contentContainerStyle={styles.scrollContent}
             >
                 {/* HEADER */}
                 <View style={styles.header}>
-                    <TouchableOpacity style={styles.headerLeft} onPress={() => router.push('/(tabs)/profile')}>
-                        <View style={styles.logoWrapper}>
-                            <Image source={require('../../assets/images/logo-pal.png')} style={styles.logo} resizeMode="contain" />
-                        </View>
-                        <View>
-                            <Text style={styles.greeting}>Halo,</Text>
-                            <Text style={styles.userName}>{user?.name || 'Karyawan'}</Text>
-                        </View>
+                    <View>
+                        <Text style={styles.greeting}>Halo, Selamat Bekerja!</Text>
+                        <Text style={styles.userName}>{user?.name || 'Karyawan'}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} style={styles.profileBtn}>
+                        <Image source={require('../../assets/images/logo-pal.png')} style={styles.logo} />
                     </TouchableOpacity>
                 </View>
 
                 {/* SHIFT CARD */}
                 <View style={styles.shiftCard}>
                     <View style={styles.shiftHeader}>
-                        <View style={styles.shiftBadge}>
-                            <Ionicons name="calendar" size={14} color={COLORS.PRIMARY} />
-                            <Text style={styles.shiftBadgeText}>Shift Hari Ini</Text>
+                        <View style={styles.badgePrimary}>
+                            <Ionicons name="calendar-outline" size={12} color={COLORS.PRIMARY} />
+                            <Text style={styles.badgeTextPrimary}>JADWAL HARI INI</Text>
                         </View>
-                        <Text style={styles.shiftDate}>{formatDateLabel(new Date().toISOString())}</Text>
+                        <Text style={styles.shiftDate}>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}</Text>
                     </View>
                     <View style={styles.shiftBody}>
-                        <View style={styles.shiftInfoItem}>
-                            <Text style={styles.shiftLabel}>Shift</Text>
-                            <Text style={styles.shiftValue}>{todayShift?.shift?.schedule || 'N/A'}</Text>
+                        <View style={styles.shiftItem}>
+                            <Text style={styles.labelSmall}>Shift</Text>
+                            <Text style={styles.valueMedium}>{todayShift?.shift?.schedule || 'N/A'}</Text>
                         </View>
-                        <View style={styles.verticalDivider} />
-                        <View style={styles.shiftInfoItem}>
-                            <Text style={styles.shiftLabel}>Jam Kerja</Text>
-                            <Text style={styles.shiftValue}>
+                        <View style={styles.vDivider} />
+                        <View style={styles.shiftItem}>
+                            <Text style={styles.labelSmall}>Jam Kerja</Text>
+                            <Text style={styles.valueMedium}>
                                 {todayShift ? `${formatTime(todayShift.shift.check_in_time)} - ${formatTime(todayShift.shift.check_out_time)}` : '--:--'}
                             </Text>
                         </View>
                     </View>
                 </View>
 
-                {/* MAIN ATTENDANCE CARD */}
-                <View style={styles.mainCard}>
-                    <View style={styles.statusRow}>
-                        <Text style={styles.cardTitle}>Presensi Anda</Text>
-                        <View style={[styles.statusIndicator, { backgroundColor: todayAttendance.hasCheckedIn ? COLORS.SUCCESS_LIGHT : COLORS.WARNING_LIGHT }]}>
-                            <View style={[styles.dot, { backgroundColor: todayAttendance.hasCheckedIn ? COLORS.SUCCESS : COLORS.WARNING }]} />
-                            <Text style={[styles.statusText, { color: todayAttendance.hasCheckedIn ? '#065F46' : '#92400E' }]}>
-                                {todayAttendance.hasCheckedIn ? 'Sudah Masuk' : 'Belum Absen'}
-                            </Text>
+                {/* OVERTIME CARD (BEDA HARI SUPPORT) */}
+                {overtimeData && (
+                    <View style={styles.overtimeCard}>
+                        <View style={styles.overtimeHeader}>
+                            <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
+                                <Ionicons name="moon" size={16} color={COLORS.ACCENT} />
+                                <Text style={styles.overtimeTitle}>Lembur Terjadwal</Text>
+                            </View>
+                            <View style={styles.badgeSuccess}>
+                                <Text style={styles.badgeTextSuccess}>{overtimeData.status.toUpperCase()}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.overtimeTimeRow}>
+                            <View style={styles.otTimeBox}>
+                                <Text style={styles.labelMicro}>{formatDateSmall(overtimeData.start_time)}</Text>
+                                <Text style={styles.valueSmall}>{formatTime(overtimeData.start_time)}</Text>
+                                <Text style={styles.labelMicro}>Mulai</Text>
+                            </View>
+                            <Ionicons name="arrow-forward" size={14} color={COLORS.TEXT_SUB} />
+                            <View style={styles.otTimeBox}>
+                                <Text style={styles.labelMicro}>{formatDateSmall(overtimeData.end_time)}</Text>
+                                <Text style={styles.valueSmall}>{formatTime(overtimeData.end_time)}</Text>
+                                <Text style={styles.labelMicro}>Selesai</Text>
+                            </View>
+                            <View style={styles.otDurationBadge}>
+                                <Text style={styles.otDurationText}>{Math.round(overtimeData.total_minutes / 60)} Jam</Text>
+                            </View>
                         </View>
                     </View>
-                    <View style={styles.timeContainer}>
-                        <View style={styles.timeBox}>
-                            <Text style={styles.timeSub}>Masuk</Text>
-                            <Text style={styles.timeMain}>{formatTime(todayAttendance.checkInTime)}</Text>
-                        </View>
-                        <View style={styles.timeBox}>
-                            <Text style={styles.timeSub}>Pulang</Text>
-                            <Text style={styles.timeMain}>{formatTime(todayAttendance.checkOutTime)}</Text>
-                        </View>
-                    </View>
-                    <View style={styles.buttonGroup}>
-                        <TouchableOpacity 
-                            style={[styles.btn, styles.btnIn, (todayAttendance.hasCheckedIn || showFaceRegisterModal) && styles.btnDisabled]}
-                            disabled={todayAttendance.hasCheckedIn || showFaceRegisterModal}
-                            onPress={() => router.push('/check-in?status=checkin')}
-                        >
-                            <Ionicons name="enter" size={20} color={COLORS.WHITE} />
-                            <Text style={styles.btnText}>Check In</Text>
-                        </TouchableOpacity>
-                        
-                        <TouchableOpacity 
-                            style={[styles.btn, styles.btnOut, (!todayAttendance.hasCheckedIn || todayAttendance.hasCheckedOut || showFaceRegisterModal) && styles.btnDisabled]}
-                            disabled={!todayAttendance.hasCheckedIn || todayAttendance.hasCheckedOut || showFaceRegisterModal}
-                            onPress={handleCheckOut}
-                        >
-                            <Ionicons name="exit" size={20} color={(!todayAttendance.hasCheckedIn || todayAttendance.hasCheckedOut) ? "#9CA3AF" : COLORS.PRIMARY} />
-                            <Text style={[styles.btnText, { color: (!todayAttendance.hasCheckedIn || todayAttendance.hasCheckedOut) ? "#9CA3AF" : COLORS.PRIMARY }]}>Check Out</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
+                )}
 
-                {/* HISTORY SECTION */}
-                <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Riwayat Terakhir</Text>
-                    <TouchableOpacity onPress={() => router.push('/history')}>
-                        <Text style={styles.linkText}>Lihat Semua</Text>
+                {/* ATTENDANCE CARD */}
+                <View style={styles.attendanceMainCard}>
+                    <View style={styles.cardInfoRow}>
+                        <Text style={styles.cardHeading}>STATUS KEHADIRAN</Text>
+                        <View style={[styles.dotStatus, { backgroundColor: todayAttendance.hasCheckedIn ? COLORS.SUCCESS : COLORS.WARNING }]} />
+                    </View>
+                    <View style={styles.mainTimeRow}>
+                        <View style={styles.mainTimeItem}>
+                            <Text style={styles.timeVal}>{formatTime(todayAttendance.checkInTime)}</Text>
+                            <Text style={styles.timeLab}>Masuk</Text>
+                        </View>
+                        <View style={styles.mainTimeItem}>
+                            <Text style={styles.timeVal}>{formatTime(todayAttendance.checkOutTime)}</Text>
+                            <Text style={styles.timeLab}>Pulang</Text>
+                        </View>
+                    </View>
+                    <TouchableOpacity 
+                        style={[styles.btnPrimary, todayAttendance.hasCheckedOut && styles.btnDisabled]} 
+                        onPress={() => !todayAttendance.hasCheckedIn ? router.push('/check-in?status=checkin') : router.push('/check-in?status=checkout')}
+                        disabled={todayAttendance.hasCheckedOut}
+                    >
+                        <Ionicons name={!todayAttendance.hasCheckedIn ? "scan-outline" : "log-out-outline"} size={20} color={COLORS.WHITE} />
+                        <Text style={styles.btnTextPrimary}>
+                            {todayAttendance.hasCheckedOut ? 'Sudah Selesai' : !todayAttendance.hasCheckedIn ? 'Check In Sekarang' : 'Check Out Sekarang'}
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
-                <View style={styles.historyCard}>
+                {/* HISTORY SECTION */}
+                <View style={styles.sectionHead}>
+                    <Text style={styles.sectionTitle}>Riwayat Terakhir</Text>
+                    <TouchableOpacity onPress={() => router.push('/history')}>
+                        <Text style={styles.viewAll}>Lihat Semua</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.historyList}>
                     {recentHistory.length > 0 ? (
                         recentHistory.map((item, index) => (
-                            <View key={index} style={styles.historyItem}>
+                            <View key={index} style={styles.historyRow}>
                                 <View style={styles.historyIcon}>
-                                    <Ionicons name="time-outline" size={20} color={COLORS.PRIMARY} />
+                                    <Ionicons name={item.type === 'check_in' ? "arrow-down-circle" : "arrow-up-circle"} size={22} color={item.type === 'check_in' ? COLORS.SUCCESS : COLORS.PRIMARY} />
                                 </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.historyType}>{item.type === 'check_in' ? 'Check In' : 'Check Out'}</Text>
+                                <View style={{flex: 1}}>
+                                    <Text style={styles.historyType}>{item.type === 'check in' ? 'Check In' : 'Check Out'}</Text>
                                     <Text style={styles.historyDate}>{new Date(item.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</Text>
                                 </View>
                                 <Text style={styles.historyTime}>{formatTime(item.time)}</Text>
                             </View>
                         ))
                     ) : (
-                        <View style={styles.emptyHistory}>
-                            <Text style={styles.emptyText}>Belum ada riwayat presensi.</Text>
+                        <View style={styles.emptyCard}>
+                            <Ionicons name="document-text-outline" size={32} color={COLORS.BORDER} />
+                            <Text style={styles.emptyText}>Belum ada riwayat absensi yang terekam</Text>
                         </View>
                     )}
                 </View>
@@ -330,85 +243,55 @@ export default function HomeScreen() {
     );
 }
 
-/**
- * STYLES (Professional & Modern)
- */
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.BG },
-    scrollContent: { paddingBottom: 100 },
-    
-    // MODAL WAJIB DAFTAR WAJAH
-    modalOverlay: {
-        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 1000
-    },
-    modalContent: {
-        backgroundColor: '#FFF', borderRadius: 30, padding: 30, width: '85%', alignItems: 'center', elevation: 10
-    },
-    iconCircleWarning: {
-        width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.WARNING_LIGHT,
-        justifyContent: 'center', alignItems: 'center', marginBottom: 20
-    },
-    modalTitle: { fontSize: 18, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN, marginBottom: 10, textAlign: 'center' },
-    modalDescription: { fontSize: 14, fontFamily: FONT.REGULAR, color: COLORS.TEXT_SUB, textAlign: 'center', lineHeight: 22, marginBottom: 25 },
-    modalActionBtn: { backgroundColor: COLORS.PRIMARY, paddingVertical: 15, borderRadius: 16, width: '100%', alignItems: 'center' },
-    modalActionText: { color: '#FFF', fontFamily: FONT.BOLD, fontSize: 16 },
-
-    // MODAL EARLY CHECKOUT
-    modalContentSmall: { backgroundColor: '#FFF', borderRadius: 20, padding: 24, width: '85%' },
-    modalTitleSmall: { fontFamily: FONT.BOLD, fontSize: 16, marginBottom: 8 },
-    modalDescriptionSmall: { fontFamily: FONT.REGULAR, fontSize: 13, color: COLORS.TEXT_SUB, marginBottom: 15 },
-    textArea: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, minHeight: 80, textAlignVertical: 'top', fontFamily: FONT.REGULAR },
-    modalRowAction: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 20, gap: 15 },
-    btnConfirmSmall: { backgroundColor: COLORS.PRIMARY, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
-    btnConfirmTextSmall: { color: '#FFF', fontFamily: FONT.BOLD },
-    btnCancelText: { color: COLORS.DANGER, fontFamily: FONT.BOLD },
-
-    // LAYOUT COMPONENTS
-    header: { padding: 20, backgroundColor: COLORS.WHITE, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', flexDirection: 'row', alignItems: 'center' },
-    headerLeft: { flexDirection: 'row', alignItems: 'center' },
-    logoWrapper: { width: 45, height: 45, borderRadius: 12, backgroundColor: COLORS.BG, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-    logo: { width: 30, height: 30 },
-    greeting: { fontSize: 12, color: COLORS.TEXT_SUB, fontFamily: FONT.REGULAR },
-    userName: { fontSize: 16, color: COLORS.TEXT_MAIN, fontFamily: FONT.BOLD },
-
-    shiftCard: { margin: 20, backgroundColor: COLORS.WHITE, borderRadius: 20, padding: 16, elevation: 2 },
+    scrollContent: { paddingBottom: 40, paddingHorizontal: 20 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 25 },
+    greeting: { fontSize: 13, fontFamily: FONT.REGULAR, color: COLORS.TEXT_SUB },
+    userName: { fontSize: 22, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    profileBtn: { width: 48, height: 48, borderRadius: 16, backgroundColor: COLORS.WHITE, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.BORDER },
+    logo: { width: 26, height: 26, resizeMode: 'contain' },
+    shiftCard: { backgroundColor: COLORS.WHITE, borderRadius: 24, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: COLORS.BORDER },
     shiftHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-    shiftBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.PRIMARY_LIGHT, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    shiftBadgeText: { fontSize: 11, color: COLORS.PRIMARY, fontFamily: FONT.BOLD, marginLeft: 4 },
-    shiftDate: { fontSize: 12, color: COLORS.TEXT_SUB, fontFamily: FONT.MEDIUM },
+    badgePrimary: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: COLORS.PRIMARY_SOFT, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    badgeTextPrimary: { fontSize: 10, fontFamily: FONT.BOLD, color: COLORS.PRIMARY },
+    shiftDate: { fontSize: 11, fontFamily: FONT.MEDIUM, color: COLORS.TEXT_SUB },
     shiftBody: { flexDirection: 'row', alignItems: 'center' },
-    shiftInfoItem: { flex: 1 },
-    shiftLabel: { fontSize: 11, color: COLORS.TEXT_SUB, fontFamily: FONT.REGULAR },
-    shiftValue: { fontSize: 14, color: COLORS.TEXT_MAIN, fontFamily: FONT.BOLD },
-    verticalDivider: { width: 1, height: 30, backgroundColor: '#F3F4F6', marginHorizontal: 15 },
-
-    mainCard: { marginHorizontal: 20, backgroundColor: COLORS.WHITE, borderRadius: 24, padding: 20, elevation: 3 },
-    statusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-    cardTitle: { fontSize: 16, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
-    statusIndicator: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
-    dot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
-    statusText: { fontSize: 11, fontFamily: FONT.BOLD },
-    timeContainer: { flexDirection: 'row', marginBottom: 25 },
-    timeBox: { flex: 1, alignItems: 'center' },
-    timeSub: { fontSize: 11, color: COLORS.TEXT_SUB, fontFamily: FONT.MEDIUM, marginBottom: 5 },
-    timeMain: { fontSize: 24, color: COLORS.TEXT_MAIN, fontFamily: FONT.BOLD },
-    buttonGroup: { flexDirection: 'row', gap: 10 },
-    btn: { flex: 1, flexDirection: 'row', height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center', gap: 6 },
-    btnIn: { backgroundColor: COLORS.PRIMARY },
-    btnOut: { backgroundColor: COLORS.WHITE, borderWidth: 1.5, borderColor: COLORS.PRIMARY },
-    btnText: { fontSize: 13, fontFamily: FONT.BOLD, color: COLORS.WHITE },
-    btnDisabled: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' },
-
-    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginTop: 25, marginBottom: 12 },
-    sectionTitle: { fontSize: 16, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
-    linkText: { fontSize: 13, color: COLORS.PRIMARY, fontFamily: FONT.MEDIUM },
-    historyCard: { marginHorizontal: 20, backgroundColor: COLORS.WHITE, borderRadius: 20, paddingHorizontal: 16, marginBottom: 20 },
-    historyItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F9FAFB' },
-    historyIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: COLORS.PRIMARY_LIGHT, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-    historyType: { fontSize: 14, color: COLORS.TEXT_MAIN, fontFamily: FONT.SEMIBOLD },
-    historyDate: { fontSize: 11, color: COLORS.TEXT_SUB, fontFamily: FONT.REGULAR },
-    historyTime: { fontSize: 14, color: COLORS.TEXT_MAIN, fontFamily: FONT.BOLD },
-    emptyHistory: { padding: 30, alignItems: 'center' },
-    emptyText: { color: COLORS.TEXT_SUB, fontSize: 13, fontFamily: FONT.REGULAR },
+    shiftItem: { flex: 1 },
+    labelSmall: { fontSize: 10, fontFamily: FONT.MEDIUM, color: COLORS.TEXT_SUB, marginBottom: 2 },
+    valueMedium: { fontSize: 15, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    vDivider: { width: 1, height: 25, backgroundColor: COLORS.BORDER, marginHorizontal: 15 },
+    overtimeCard: { backgroundColor: '#F0F4FF', borderRadius: 20, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#D0E0FF' },
+    overtimeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    overtimeTitle: { fontSize: 13, fontFamily: FONT.BOLD, color: COLORS.ACCENT },
+    badgeSuccess: { backgroundColor: COLORS.SUCCESS, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+    badgeTextSuccess: { fontSize: 9, fontFamily: FONT.BOLD, color: COLORS.WHITE },
+    overtimeTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    otTimeBox: { alignItems: 'center' },
+    valueSmall: { fontSize: 16, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    labelMicro: { fontSize: 9, fontFamily: FONT.REGULAR, color: COLORS.TEXT_SUB },
+    otDurationBadge: { marginLeft: 'auto', backgroundColor: COLORS.WHITE, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: '#D0E0FF' },
+    otDurationText: { fontSize: 11, fontFamily: FONT.BOLD, color: COLORS.ACCENT },
+    attendanceMainCard: { backgroundColor: COLORS.WHITE, borderRadius: 30, padding: 24, elevation: 2, borderWidth: 1, borderColor: COLORS.BORDER, marginBottom: 25 },
+    cardInfoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    cardHeading: { fontSize: 11, fontFamily: FONT.BOLD, color: COLORS.TEXT_SUB, letterSpacing: 1 },
+    dotStatus: { width: 8, height: 8, borderRadius: 4 },
+    mainTimeRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 25 },
+    mainTimeItem: { alignItems: 'center' },
+    timeVal: { fontSize: 32, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    timeLab: { fontSize: 12, fontFamily: FONT.MEDIUM, color: COLORS.TEXT_SUB },
+    btnPrimary: { backgroundColor: COLORS.PRIMARY, height: 56, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+    btnTextPrimary: { color: COLORS.WHITE, fontSize: 16, fontFamily: FONT.BOLD },
+    btnDisabled: { opacity: 0.5, backgroundColor: COLORS.BG },
+    sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+    sectionTitle: { fontSize: 18, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    viewAll: { fontSize: 13, fontFamily: FONT.MEDIUM, color: COLORS.PRIMARY },
+    historyList: { gap: 12 },
+    historyRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.WHITE, padding: 15, borderRadius: 18, borderWidth: 1, borderColor: COLORS.BORDER },
+    historyIcon: { marginRight: 15 },
+    historyType: { fontSize: 14, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    historyDate: { fontSize: 11, fontFamily: FONT.REGULAR, color: COLORS.TEXT_SUB },
+    historyTime: { fontSize: 15, fontFamily: FONT.BOLD, color: COLORS.TEXT_MAIN },
+    emptyCard: { alignItems: 'center', padding: 30, backgroundColor: COLORS.WHITE, borderRadius: 20, borderStyle: 'dashed', borderWidth: 1, borderColor: COLORS.BORDER },
+    emptyText: { marginTop: 10, fontSize: 13, color: COLORS.TEXT_SUB, textAlign: 'center' }
 });

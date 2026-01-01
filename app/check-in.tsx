@@ -59,7 +59,7 @@ export default function CheckInScreen() {
     const [similarity, setSimilarity] = useState<number>(0);
     const [faceVerified, setFaceVerified] = useState(false);
     
-    const tflite = useTensorflowModel(require('../assets/models/mobile_face_net.tflite'));
+    const tflite = useTensorflowModel(require('../assets/models/mobilefacenet.tflite'));
     const model = tflite.model;
     const { resize } = useResizePlugin();
 
@@ -122,18 +122,15 @@ export default function CheckInScreen() {
         }
     };
 
-    // --- LOGIKA REAL-TIME SIMILARITY (PERBAIKAN DEADLOCK) ---
     const onFaceMatched = Worklets.createRunOnJS((sim: number) => {
         if (sim <= 0) {
             lastSimValue.current = 0;
             setSimilarity(0);
             setFaceVerified(false);
         } else {
-            // Langsung ambil nilai baru jika sebelumnya kosong (Cold Start Fix)
             if (lastSimValue.current === 0) {
                 lastSimValue.current = sim;
             } else {
-                // Smoothing sangat tipis agar tetap stabil tapi instan
                 lastSimValue.current = (lastSimValue.current * 0.05) + (sim * 0.95);
             }
             setSimilarity(lastSimValue.current);
@@ -144,9 +141,7 @@ export default function CheckInScreen() {
 
     const updateUIState = Worklets.createRunOnJS((detected: boolean, yaw: number) => {
         setIsFaceDetected(detected);
-        
         if (!detected) {
-            // Reset langkah jika wajah hilang agar tidak "nyangkut" di step tertentu
             if (step !== 'SHAKE') {
                 setStep('SHAKE');
                 shakeProgress.value = 0;
@@ -154,13 +149,11 @@ export default function CheckInScreen() {
             return;
         }
 
-        // Logika Liveness (Gerakan)
         if (step === 'SHAKE') {
             const progress = Math.min(Math.abs(yaw) / 20, 1);
             if (progress > shakeProgress.value) shakeProgress.value = withTiming(progress);
             if (shakeProgress.value >= 0.8) setStep('FACE_CHECK');
         } else if (step === 'FACE_CHECK') {
-            // Menunggu wajah lurus (yaw mendekati 0)
             if (Math.abs(yaw) < 6) setStep('READY');
         }
     });
@@ -168,7 +161,7 @@ export default function CheckInScreen() {
     const frameProcessor = useFrameProcessor((frame) => {
         'worklet';
         const now = Date.now();
-        if (now - lastProcessedTime.current < 120) return; // Lebih cepat (120ms)
+        if (now - lastProcessedTime.current < 120) return;
         lastProcessedTime.current = now;
 
         const faces = detectFaces(frame);
@@ -177,18 +170,14 @@ export default function CheckInScreen() {
             const face = faces[0];
             updateUIState(true, face.yawAngle);
 
-            // Selalu proses similarity selama model tersedia, tidak peduli step apa
             if (model != null && userVector != null && !isProcessingFace.value) {
                 isProcessingFace.value = true;
-                
                 const resized = resize(frame, { 
                     scale: { width: 112, height: 112 }, 
                     pixelFormat: 'rgb', 
                     dataType: 'float32' 
                 });
-                
                 const output = model.runSync([resized]);
-                
                 if (output && output.length > 0) {
                     const currentVec = Array.from(output[0] as Float32Array);
                     let dot = 0, normA = 0, normB = 0;
@@ -208,7 +197,26 @@ export default function CheckInScreen() {
             updateUIState(false, 0);
             onFaceMatched(0);
         }
-    }, [model, userVector, step]); // Re-bind jika step berubah
+    }, [model, userVector, step]);
+
+    // Fungsi untuk memberikan saran instruksi secara bergantian
+    const getInstructionHint = () => {
+        if (!isFaceDetected) return "HADAPKAN WAJAH KE KAMERA";
+        if (step === 'SHAKE') return "GELENGKAN KEPALA PERLAHAN";
+        if (step === 'FACE_CHECK') return "POSISIKAN WAJAH DI TENGAH";
+        
+        if (faceVerified) return "WAJAH TERVERIFIKASI";
+
+        // Jika sudah sampai tahap READY tapi belum verified, berikan saran
+        const hints = [
+            "Pastikan cahaya ruangan terang",
+            "Dekatkan jarak wajah ke kamera",
+            "Pastikan wajah Anda terlihat jelas",
+            "Coba lepas kacamata/masker jika ada"
+        ];
+        // Pilih saran berdasarkan detik agar berganti-ganti
+        return hints[Math.floor(Date.now() / 2000) % hints.length];
+    };
 
     const takePicture = async () => {
         if (!isFaceDetected || !faceVerified || step !== 'READY') return;
@@ -223,13 +231,18 @@ export default function CheckInScreen() {
         setIsLoading(true);
         try {
             const { user, token } = authStore.getState();
+            // Ambil waktu sekarang (format HH:mm:ss)
+            const now = new Date();
+            const pad = (n: number) => n.toString().padStart(2, '0');
+            const currentTime = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
             const payload = {
                 userId: user!.id,
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
                 bukti: { uri: photo, type: 'image/jpeg', name: 'attendance.jpg' } as any,
                 token: token!,
-                notes: (params.notes as string) || ""
+                notes: (params.notes as string) || "",
+                ...(statusType === 'checkout' ? { time: currentTime } : {})
             };
             const result = statusType === 'checkin' ? await attendanceService.checkIn(payload) : await attendanceService.checkOut(payload);
             if (result.success) {
@@ -245,7 +258,7 @@ export default function CheckInScreen() {
         borderColor: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : COLORS.PRIMARY),
     }));
 
-    if (checkingLocation) return <View style={styles.mainContainer}><ActivityIndicator size="large" color={COLORS.PRIMARY} /></View>;
+    if (checkingLocation) return <View style={styles.loadingWrapper}><ActivityIndicator size="large" color={COLORS.PRIMARY} /><Text style={styles.loadingText}>Memeriksa Lokasi...</Text></View>;
 
     return (
         <View style={styles.mainContainer}>
@@ -283,19 +296,19 @@ export default function CheckInScreen() {
                 </View>
 
                 <View style={styles.statusBox}>
-                    <Text style={[styles.statusTitle, { 
-                        color: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : COLORS.PRIMARY) 
+                    <View style={[styles.statusBadge, { 
+                        backgroundColor: !isFaceDetected ? '#FEE2E2' : (faceVerified ? '#D1FAE5' : '#E0F2FE')
                     }]}>
-                        {!isFaceDetected ? "WAJAH TIDAK TERDETEKSI" :
-                         step === 'SHAKE' ? "GELENGKAN KEPALA PERLAHAN" :
-                         step === 'FACE_CHECK' ? "HADAP LURUS KE KAMERA" :
-                         faceVerified ? `WAJAH SESUAI (${(similarity * 100).toFixed(0)}%)` : 
-                         `WAJAH TIDAK COCOK (${(similarity * 100).toFixed(0)}%)`}
-                    </Text>
+                        <Text style={[styles.statusTitle, { 
+                            color: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : '#0369A1') 
+                        }]}>
+                            {getInstructionHint().toUpperCase()}
+                        </Text>
+                    </View>
                     
-                    {isFaceDetected && (
-                        <Text style={styles.scoreText}>
-                            Akurasi Real-time: {(similarity * 100).toFixed(1)}%
+                    {isFaceDetected && !faceVerified && step === 'READY' && (
+                        <Text style={styles.hintText}>
+                            Sistem sedang mencocokkan wajah Anda...
                         </Text>
                     )}
                 </View>
@@ -308,7 +321,7 @@ export default function CheckInScreen() {
                             <Text style={[styles.mainBtnText, {color: COLORS.TEXT}]}>ULANGI</Text>
                         </TouchableOpacity>
                         <TouchableOpacity onPress={handleFinalSubmit} style={[styles.mainBtn, {flex: 2, backgroundColor: COLORS.PRIMARY}]}>
-                            {isLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.mainBtnText}>KIRIM</Text>}
+                            {isLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.mainBtnText}>KIRIM ABSEN</Text>}
                         </TouchableOpacity>
                     </View>
                 ) : (
@@ -318,7 +331,7 @@ export default function CheckInScreen() {
                         disabled={!faceVerified || !isFaceDetected || step !== 'READY'}
                     >
                         <Text style={styles.mainBtnText}>
-                            {step === 'SHAKE' ? "GELENGKAN KEPALA" : step === 'FACE_CHECK' ? "HADAP LURUS" : "AMBIL FOTO"}
+                            {faceVerified ? "AMBIL FOTO" : "IKUTI INSTRUKSI"}
                         </Text>
                     </TouchableOpacity>
                 )}
@@ -343,13 +356,16 @@ const styles = StyleSheet.create({
     progressRing: { position: 'absolute', width: cameraSize + 14, height: cameraSize + 14, borderRadius: (cameraSize + 14) / 2, borderWidth: 5 },
     cameraCircle: { width: cameraSize, height: cameraSize, borderRadius: cameraSize / 2, overflow: 'hidden', backgroundColor: '#000', borderWidth: 4, borderColor: COLORS.WHITE },
     statusBox: { alignItems: 'center', marginTop: 25, paddingHorizontal: 30 },
-    statusTitle: { fontSize: 16, fontWeight: '800', textAlign: 'center' },
-    scoreText: { fontSize: 12, color: COLORS.SUBTEXT, marginTop: 5, fontWeight: '600' },
+    statusBadge: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, marginBottom: 8 },
+    statusTitle: { fontSize: 14, fontWeight: '800', textAlign: 'center' },
+    hintText: { fontSize: 13, color: COLORS.SUBTEXT, textAlign: 'center', marginTop: 5, fontStyle: 'italic' },
     footer: { position: 'absolute', bottom: 0, width: '100%', padding: 25, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, elevation: 20 },
     btnRow: { flexDirection: 'row', gap: 12 },
     mainBtn: { height: 55, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
     btnOutline: { flex: 1, borderWidth: 1, borderColor: '#CBD5E1' },
     btnSuccess: { backgroundColor: COLORS.PRIMARY, width: '100%' },
     btnDisabled: { backgroundColor: '#CBD5E1', width: '100%' },
-    mainBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800' }
+    mainBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800' },
+    loadingWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    loadingText: { marginTop: 10, color: COLORS.TEXT, fontWeight: 'bold' }
 });

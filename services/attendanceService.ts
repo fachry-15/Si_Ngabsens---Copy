@@ -249,17 +249,22 @@ export const attendanceService = {
   },
 
   /**
-   * 5. Melakukan Check Out.
+   * 5. Melakukan Check Out (dengan input waktu manual jika diperlukan).
    */
-  checkOut: async ({ userId, latitude, longitude, bukti, token, notes }: CheckActionParams) => {
+  checkOut: async ({ userId, latitude, longitude, bukti, token, notes, time }: CheckActionParams & { time?: string }) => {
     const formData = new FormData();
     formData.append('user_id', userId.toString());
     formData.append('notes', notes || '');
-    
+
     // Kirim data lokasi ke backend
     formData.append('latitude', latitude.toString());
     formData.append('longitude', longitude.toString());
-    
+
+    // Tambahkan input waktu jika ada
+    if (time) {
+      formData.append('time', time);
+    }
+
     if (bukti) {
       formData.append('bukti', {
         uri: bukti.uri,
