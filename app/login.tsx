@@ -1,84 +1,38 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import CustomModal from '../components/CustomModal';
 
-import ApiSettingsModal from '@/components/ApiSettingsModal';
-import { authService } from '@/services/authService';
-import { authStore } from '@/store/authStore';
+import CustomModal from '@/components/CustomModal';
+import { InputField } from '@/components/auth/InputField';
+import { LoginFooter } from '@/components/auth/LoginFooter';
+import { LoginHeader } from '@/components/auth/LoginHeader';
+import { PrimaryButton } from '@/components/auth/PrimaryButton';
+import { useLoginForm } from '@/hooks/useLoginForm';
 
-const FONT = {
-  BOLD: 'Fredoka-Bold',
-  MEDIUM: 'Fredoka-Medium',
-  REGULAR: 'Fredoka-Regular',
-};
-
-export default function LoginScreen() {
-  // Modal state
-  const [modal, setModal] = useState<{visible: boolean, type?: 'success' | 'error' | 'info', title: string, message: string, onClose?: () => void}>({visible: false, type: 'info', title: '', message: ''});
-  const showModal = (type: 'success' | 'error' | 'info', title: string, message: string, onClose?: () => void) => {
-    setModal({ visible: true, type, title, message, onClose });
-  };
-  const hideModal = () => {
-    setModal(m => ({ ...m, visible: false }));
-    if (modal.onClose) modal.onClose();
-  };
-  const router = useRouter();
-  const [step, setStep] = useState<'nip' | 'password'>('nip');
-  const [nip, setNip] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showApiSettings, setShowApiSettings] = useState(false);
-
-  const handleContinue = async () => {
-    if (step === 'nip' && nip.trim()) {
-      setStep('password');
-    } else if (step === 'password' && password.trim()) {
-      setIsLoading(true);
-
-      try {
-        const response = await authService.login({
-          nip: nip.trim(),
-          password: password.trim(),
-        });
-
-        if (response.success && response.data) {
-          await authStore.login(response.data.token, response.data.user);
-          
-          showModal('success', 'Login Berhasil', `Selamat datang, ${response.data.user.name} 👋`, () => router.replace('/(tabs)'));
-        } else {
-          // Ganti Alert Gagal
-          showModal('error', 'Login Gagal', response.message || 'NIP atau password salah');
-        }
-      } catch {
-        // Ganti Alert Error
-        showModal('error', 'Kesalahan Sistem', 'Tidak dapat terhubung ke server');
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
-
-  const handleBack = () => {
-    if (step === 'password') {
-      setStep('nip');
-      setPassword('');
-    }
-  };
+export default function LoginScreen(): React.JSX.Element {
+  const [showApiSettings, setShowApiSettings] = useState<boolean>(false);
+  const {
+    step,
+    formData,
+    showPassword,
+    isLoading,
+    modal,
+    setShowPassword,
+    handleContinue,
+    handleBack,
+    updateFormData,
+    hideModal,
+  } = useLoginForm();
 
   return (
     <>
@@ -91,32 +45,32 @@ export default function LoginScreen() {
       />
       <Stack.Screen options={{ headerShown: false }} />
       <SafeAreaView style={styles.container}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.illustrationContainer}>
-              <View style={styles.illustrationBg}>
-                <Image
-                  source={{ uri: 'https://images.unsplash.com/photo-1553877522-43269d4ea984?w=400&h=300&fit=crop' }}
-                  style={styles.illustration}
-                />
-                <View style={styles.overlay} />
-                <View style={styles.headerTextContainer}>
-                  <Text style={styles.headerTitle}>Selamat Datang</Text>
-                  <Text style={styles.headerSubtitle}>
-                    {step === 'nip' ? 'Sistem Absensi Karyawan' : `Masuk sebagai ${nip}`}
-                  </Text>
-                </View>
-              </View>
-            </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardView}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <LoginHeader step={step} nip={formData.nip} />
 
             <View style={styles.loginCard}>
+              {/* Card Header */}
               <View style={styles.cardHeader}>
                 {step === 'password' ? (
-                  <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                  <TouchableOpacity 
+                    onPress={handleBack} 
+                    style={styles.backButton}
+                    activeOpacity={0.7}
+                  >
                     <Ionicons name="arrow-back" size={24} color="#1F2937" />
                   </TouchableOpacity>
-                ) : <View style={styles.backButton} />}
-                
+                ) : (
+                  <View style={styles.backButton} />
+                )}
+
                 <Text style={styles.loginTitle}>
                   {step === 'nip' ? 'Masuk Akun' : 'Masukkan Kata Sandi'}
                 </Text>
@@ -124,123 +78,132 @@ export default function LoginScreen() {
               </View>
 
               <Text style={styles.inputPrompt}>
-                {step === 'nip' ? 'Langkah 1/2: Masukkan NIP Anda' : 'Langkah 2/2: Verifikasi Password Anda'}
+                {step === 'nip'
+                  ? 'Langkah 1/2: Masukkan NIP Anda'
+                  : 'Langkah 2/2: Verifikasi Password Anda'}
               </Text>
 
-              {step === 'nip' ? (
-                <View style={styles.inputContainer}>
-                  <View style={styles.inputWrapper}>
-                    <Ionicons name="person-outline" size={22} color="#9CA3AF" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.input}
+              {/* Form Input */}
+              <View style={styles.inputContainer}>
+                {step === 'nip' ? (
+                  <>
+                    <InputField
+                      icon="person-outline"
                       placeholder="Nomor Induk Pegawai (NIP)"
-                      value={nip}
-                      onChangeText={setNip}
-                      keyboardType="default" 
+                      value={formData.nip}
+                      onChangeText={(text) => updateFormData('nip', text)}
+                      keyboardType="default"
                       autoCapitalize="none"
-                      placeholderTextColor="#9CA3AF"
                       autoFocus
-                      selectionColor="#2b5597"
                       onSubmitEditing={handleContinue}
                       returnKeyType="next"
                     />
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.continueButton, !nip.trim() && styles.continueButtonDisabled]}
-                    onPress={handleContinue}
-                    disabled={!nip.trim()}
-                  >
-                    <Text style={styles.continueButtonText}>Lanjutkan</Text>
-                    <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.inputContainer}>
-                  <View style={styles.inputWrapper}>
-                    <Ionicons name="lock-closed-outline" size={22} color="#9CA3AF" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.input}
+                    <PrimaryButton
+                      text="Lanjutkan"
+                      icon="arrow-forward"
+                      onPress={handleContinue}
+                      disabled={!formData.nip.trim()}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <InputField
+                      icon="lock-closed-outline"
                       placeholder="Password Akun"
-                      value={password}
-                      onChangeText={setPassword}
+                      value={formData.password}
+                      onChangeText={(text) => updateFormData('password', text)}
                       secureTextEntry={!showPassword}
-                      placeholderTextColor="#9CA3AF"
                       autoFocus
-                      selectionColor="#2b5597"
                       onSubmitEditing={handleContinue}
                       returnKeyType="done"
+                      showPasswordToggle
+                      isPasswordVisible={showPassword}
+                      onTogglePassword={() => setShowPassword(!showPassword)}
                     />
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
-                      <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={22} color="#9CA3AF" />
+                    <TouchableOpacity 
+                      style={styles.forgotPassword}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.forgotPasswordText}>Lupa Password?</Text>
                     </TouchableOpacity>
-                  </View>
-                  <TouchableOpacity style={styles.forgotPassword}>
-                    <Text style={styles.forgotPasswordText}>Lupa Password?</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.continueButton, (!password.trim() || isLoading) && styles.continueButtonDisabled]}
-                    onPress={handleContinue}
-                    disabled={!password.trim() || isLoading}
-                  >
-                    {isLoading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Text style={styles.continueButtonText}>Login</Text>
-                        <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              <View style={styles.footer}>
-                <Image source={require('@/assets/images/logo-pal.png')} style={styles.footerLogo} resizeMode="contain" />
-                <Text style={styles.footerText}>PT PAL Indonesia</Text>
-                <TouchableOpacity style={styles.settingsButton} onPress={() => setShowApiSettings(true)}>
-                  <Ionicons name="settings-outline" size={16} color="#2b5597" />
-                  <Text style={styles.settingsButtonText}>Pengaturan API</Text>
-                </TouchableOpacity>
+                    <PrimaryButton
+                      text="Login"
+                      icon="log-in-outline"
+                      onPress={handleContinue}
+                      disabled={!formData.password.trim()}
+                      loading={isLoading}
+                    />
+                  </>
+                )}
               </View>
+
+              <LoginFooter onSettingsPress={() => setShowApiSettings(true)} />
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        <ApiSettingsModal visible={showApiSettings} onClose={() => setShowApiSettings(false)} />
       </SafeAreaView>
     </>
   );
 }
 
-// ... styles tetap sama seperti kode sebelumnya
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
-  keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1 },
-  illustrationContainer: { height: 260, backgroundColor: '#F5F7FA' },
-  illustrationBg: { height: '100%', position: 'relative', overflow: 'hidden' },
-  illustration: { width: '100%', height: '100%', resizeMode: 'cover' },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(43, 85, 151, 0.88)' },
-  headerTextContainer: { position: 'absolute', bottom: 30, left: 24, right: 24 },
-  headerTitle: { fontSize: 34, fontFamily: FONT.BOLD, color: '#FFFFFF', marginBottom: 4 },
-  headerSubtitle: { fontSize: 15, fontFamily: FONT.MEDIUM, color: '#E0E7FF', lineHeight: 22 },
-  loginCard: { flex: 1, backgroundColor: '#FFFFFF', borderTopLeftRadius: 36, borderTopRightRadius: 36, marginTop: -30, paddingHorizontal: 24, paddingTop: 36, paddingBottom: 24, elevation: 10 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
-  loginTitle: { fontSize: 24, fontFamily: FONT.BOLD, color: '#1F2937' },
-  backButton: { padding: 8, width: 40 },
-  inputPrompt: { fontSize: 15, fontFamily: FONT.MEDIUM, color: '#6B7280', marginBottom: 24 },
-  inputContainer: { marginBottom: 24 },
-  inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 16, borderWidth: 1, borderColor: '#E5E7EB' },
-  inputIcon: { marginRight: 12 },
-  input: { flex: 1, fontSize: 16, color: '#1F2937', fontFamily: FONT.REGULAR },
-  eyeButton: { padding: 4 },
-  forgotPassword: { alignSelf: 'flex-end', marginBottom: 30 },
-  forgotPasswordText: { fontSize: 14, color: '#2b5597', fontFamily: FONT.MEDIUM },
-  continueButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 16, gap: 10, elevation: 6 },
-  continueButtonDisabled: { backgroundColor: '#B0BEC5', elevation: 0 },
-  continueButtonText: { fontSize: 17, fontFamily: FONT.BOLD, color: '#FFFFFF' },
-  footer: { marginTop: 40, alignItems: 'center', paddingVertical: 20 },
-  footerLogo: { width: 70, height: 70, marginBottom: 10 },
-  footerText: { fontSize: 15, fontFamily: FONT.BOLD, color: '#2b5597', marginBottom: 2 },
-  settingsButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F3F4F6' },
-  settingsButtonText: { fontSize: 12, color: '#2b5597', fontFamily: FONT.MEDIUM },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#F5F7FA' 
+  },
+  keyboardView: { 
+    flex: 1 
+  },
+  scrollContent: { 
+    flexGrow: 1 
+  },
+  loginCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 36,
+    borderTopRightRadius: 36,
+    marginTop: -30,
+    paddingHorizontal: 24,
+    paddingTop: 36,
+    paddingBottom: 24,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  loginTitle: { 
+    fontSize: 24, 
+    fontFamily: 'Fredoka-Bold', 
+    color: '#1F2937' 
+  },
+  backButton: { 
+    padding: 8, 
+    width: 40 
+  },
+  inputPrompt: { 
+    fontSize: 15, 
+    fontFamily: 'Fredoka-Medium', 
+    color: '#6B7280', 
+    marginBottom: 24 
+  },
+  inputContainer: { 
+    marginBottom: 24 
+  },
+  forgotPassword: { 
+    alignSelf: 'flex-end', 
+    marginBottom: 30,
+    paddingVertical: 4,
+  },
+  forgotPasswordText: { 
+    fontSize: 14, 
+    color: '#2b5597', 
+    fontFamily: 'Fredoka-Medium' 
+  },
 });
