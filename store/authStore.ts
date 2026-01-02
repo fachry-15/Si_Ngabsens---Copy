@@ -1,11 +1,31 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+interface Division {
+  id?: number;
+  name: string;
+  area?: {
+    id?: number;
+    name: string;
+  };
+}
+
+interface Area {
+  id?: number;
+  name: string;
+}
+
 interface User {
   id?: number;
   nip: string;
   name: string;
   role: string;
   email?: string;
+  join_date?: string;
+  division_id?: Division | number;
+  division?: Division;
+  area?: Area;
+  division_name?: string;
+  area_name?: string;
 }
 
 interface AuthState {

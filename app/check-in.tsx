@@ -13,6 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { useTensorflowModel } from 'react-native-fast-tflite';
 import Animated, {
     interpolate,
     useAnimatedStyle,
@@ -29,12 +30,12 @@ import {
 } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets } from 'react-native-worklets-core';
-import { useTensorflowModel } from 'react-native-fast-tflite';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
 
 import CustomModal from '../components/CustomModal';
+import { LocationSuccessModal } from '../components/LocationSuccessModal';
 import { attendanceService } from '../services/attendanceService';
-import { getUserFaceVector } from '../services/faceVectorService';
+import { faceService } from '../services/faceVectorService';
 import { authStore } from '../store/authStore';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -64,6 +65,7 @@ export default function CheckInScreen() {
     const { resize } = useResizePlugin();
 
     const [modal, setModal] = useState({ visible: false, type: 'info' as any, title: '', message: '', onClose: () => {} });
+    const [locationModal, setLocationModal] = useState({ visible: false, areaName: '' });
     const [checkingLocation, setCheckingLocation] = useState(true);
     const [isFaceDetected, setIsFaceDetected] = useState(false);
     const [step, setStep] = useState<'SHAKE' | 'FACE_CHECK' | 'READY'>('SHAKE');
@@ -71,12 +73,26 @@ export default function CheckInScreen() {
     const [isLoading, setIsLoading] = useState(false);
     const [areaName, setAreaName] = useState('');
     const [location, setLocation] = useState<Location.LocationObject | null>(null);
+    const [lowPercentageCount, setLowPercentageCount] = useState(0);
     
     const camera = useRef<Camera>(null);
     const lastProcessedTime = useRef(0);
     const lastSimValue = useRef(0); 
     const isProcessingFace = useSharedValue(false);
     const shakeProgress = useSharedValue(0);
+    const pulseAnimation = useSharedValue(1);
+
+    useEffect(() => {
+        // Animasi pulse untuk loading
+        pulseAnimation.value = withRepeat(
+            withSequence(
+                withTiming(1.15, { duration: 1000 }),
+                withTiming(1, { duration: 1000 })
+            ),
+            -1,
+            false
+        );
+    }, []);
 
     const device = useCameraDevice('front');
     const { hasPermission, requestPermission } = useCameraPermission();
@@ -85,7 +101,7 @@ export default function CheckInScreen() {
     useEffect(() => {
         initSetup();
         (async () => {
-            const res = await getUserFaceVector();
+            const res = await faceService.getUserFaceVector();
             if (res && res.data?.vector) {
                 const vec = typeof res.data.vector === 'string' ? JSON.parse(res.data.vector) : res.data.vector;
                 setUserVector(vec);
@@ -111,6 +127,8 @@ export default function CheckInScreen() {
                 if (res.match === true) {
                     setAreaName(res.area || "Area Terverifikasi");
                     setCheckingLocation(false);
+                    // Tampilkan modal lokasi sukses
+                    setLocationModal({ visible: true, areaName: res.area || "Area Terverifikasi" });
                 } else {
                     setCheckingLocation(false);
                     setModal({ visible: true, type: 'error', title: 'Lokasi Salah', message: res.message || 'Anda diluar radius.', onClose: () => router.back() });
@@ -134,8 +152,13 @@ export default function CheckInScreen() {
                 lastSimValue.current = (lastSimValue.current * 0.05) + (sim * 0.95);
             }
             setSimilarity(lastSimValue.current);
-            setFaceVerified(lastSimValue.current > 0.70);
-        }
+            setFaceVerified(lastSimValue.current > 0.60);            
+            // Track jika persentase stuck di rendah
+            if (lastSimValue.current < 0.50 && step === 'READY') {
+                setLowPercentageCount(prev => prev + 1);
+            } else {
+                setLowPercentageCount(0);
+            }        }
         isProcessingFace.value = false;
     });
 
@@ -199,23 +222,73 @@ export default function CheckInScreen() {
         }
     }, [model, userVector, step]);
 
+    // Fungsi untuk mendapatkan kategori dan saran berdasarkan persentase
+    const getSuggestion = (percentage: number) => {
+        // Jika stuck di persentase rendah, sarankan reset
+        if (lowPercentageCount > 50 && percentage < 50) {
+            return {
+                category: 'Perlu Reset',
+                suggestion: 'Coba keluar dan scan ulang untuk hasil lebih baik',
+                color: '#EF4444',
+                showReset: true
+            };
+        }
+        
+        if (percentage < 30) {
+            return {
+                category: 'Sangat Rendah',
+                suggestion: 'Pastikan pencahayaan cukup terang dan hadapkan wajah langsung ke kamera',
+                color: '#EF4444',
+                showReset: false
+            };
+        } else if (percentage < 50) {
+            return {
+                category: 'Rendah',
+                suggestion: 'Dekatkan wajah ke kamera dan pastikan tidak ada bayangan di wajah',
+                color: '#F59E0B',
+                showReset: false
+            };
+        } else if (percentage < 65) {
+            return {
+                category: 'Sedang',
+                suggestion: 'Lepas kacamata/masker jika ada, dan pastikan wajah terlihat jelas',
+                color: '#3B82F6',
+                showReset: false
+            };
+        } else if (percentage < 70) {
+            return {
+                category: 'Hampir Berhasil',
+                suggestion: 'Tahan posisi, tetap diam sebentar...',
+                color: '#10B981',
+                showReset: false
+            };
+        } else {
+            return {
+                category: 'Terverifikasi',
+                suggestion: 'Wajah berhasil dikenali!',
+                color: '#10B981',
+                showReset: false
+            };
+        }
+    };
+
     // Fungsi untuk memberikan saran instruksi secara bergantian
     const getInstructionHint = () => {
+        const percentage = Math.round(similarity * 100);
+        
         if (!isFaceDetected) return "HADAPKAN WAJAH KE KAMERA";
         if (step === 'SHAKE') return "GELENGKAN KEPALA PERLAHAN";
         if (step === 'FACE_CHECK') return "POSISIKAN WAJAH DI TENGAH";
         
-        if (faceVerified) return "WAJAH TERVERIFIKASI";
+        if (faceVerified) return "VERIFIKASI BERHASIL";
+        
+        // Tampilkan kategori untuk debugging
+        if (step === 'READY') {
+            const { category } = getSuggestion(percentage);
+            return `${category.toUpperCase()} (${percentage}%)`;
+        }
 
-        // Jika sudah sampai tahap READY tapi belum verified, berikan saran
-        const hints = [
-            "Pastikan cahaya ruangan terang",
-            "Dekatkan jarak wajah ke kamera",
-            "Pastikan wajah Anda terlihat jelas",
-            "Coba lepas kacamata/masker jika ada"
-        ];
-        // Pilih saran berdasarkan detik agar berganti-ganti
-        return hints[Math.floor(Date.now() / 2000) % hints.length];
+        return `KECOCOKAN: ${percentage}%`;
     };
 
     const takePicture = async () => {
@@ -258,7 +331,29 @@ export default function CheckInScreen() {
         borderColor: !isFaceDetected ? COLORS.DANGER : (faceVerified ? COLORS.SUCCESS : COLORS.PRIMARY),
     }));
 
-    if (checkingLocation) return <View style={styles.loadingWrapper}><ActivityIndicator size="large" color={COLORS.PRIMARY} /><Text style={styles.loadingText}>Memeriksa Lokasi...</Text></View>;
+    const pulseStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: pulseAnimation.value }],
+    }));
+
+    if (checkingLocation) {
+        return (
+            <View style={styles.loadingWrapper}>
+                <View style={styles.loadingCard}>
+                    <View style={styles.loadingIconContainer}>
+                        <Animated.View style={[styles.loadingPulse, pulseStyle]} />
+                        <View style={styles.loadingIconCircle}>
+                            <Ionicons name="location" size={40} color={COLORS.PRIMARY} />
+                        </View>
+                    </View>
+                    <Text style={styles.loadingTitle}>Memverifikasi Lokasi</Text>
+                    <Text style={styles.loadingSubtitle}>Mohon tunggu, sedang memeriksa posisi Anda...</Text>
+                    <View style={styles.loadingIndicatorWrapper}>
+                        <ActivityIndicator size="small" color={COLORS.PRIMARY} />
+                    </View>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.mainContainer}>
@@ -306,10 +401,24 @@ export default function CheckInScreen() {
                         </Text>
                     </View>
                     
-                    {isFaceDetected && !faceVerified && step === 'READY' && (
-                        <Text style={styles.hintText}>
-                            Sistem sedang mencocokkan wajah Anda...
-                        </Text>
+                    {isFaceDetected && step === 'READY' && !faceVerified && (
+                        <View style={styles.suggestionWrapper}>
+                            <Text style={[styles.suggestionText, { 
+                                color: getSuggestion(Math.round(similarity * 100)).color 
+                            }]}>
+                                💡 {getSuggestion(Math.round(similarity * 100)).suggestion}
+                            </Text>
+                            {getSuggestion(Math.round(similarity * 100)).showReset && (
+                                <TouchableOpacity 
+                                    style={styles.resetButton}
+                                    onPress={() => router.back()}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="refresh" size={16} color="#FFFFFF" />
+                                    <Text style={styles.resetButtonText}>Scan Ulang</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
                     )}
                 </View>
             </ScrollView>
@@ -337,6 +446,12 @@ export default function CheckInScreen() {
                 )}
             </View>
 
+            <LocationSuccessModal
+                visible={locationModal.visible}
+                areaName={locationModal.areaName}
+                onClose={() => setLocationModal({ visible: false, areaName: '' })}
+            />
+
             <CustomModal visible={modal.visible} type={modal.type} title={modal.title} message={modal.message} onClose={() => { setModal(m => ({ ...m, visible: false })); modal.onClose(); }} />
         </View>
     );
@@ -358,6 +473,38 @@ const styles = StyleSheet.create({
     statusBox: { alignItems: 'center', marginTop: 25, paddingHorizontal: 30 },
     statusBadge: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, marginBottom: 8 },
     statusTitle: { fontSize: 14, fontWeight: '800', textAlign: 'center' },
+    suggestionWrapper: {
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    suggestionText: {
+        fontSize: 13,
+        fontFamily: 'Fredoka-Medium',
+        textAlign: 'center',
+        lineHeight: 18,
+        paddingHorizontal: 20,
+        marginBottom: 8,
+    },
+    resetButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#EF4444',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+        marginTop: 8,
+        shadowColor: '#EF4444',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    resetButtonText: {
+        fontSize: 13,
+        fontFamily: 'Fredoka-Bold',
+        color: '#FFFFFF',
+    },
     hintText: { fontSize: 13, color: COLORS.SUBTEXT, textAlign: 'center', marginTop: 5, fontStyle: 'italic' },
     footer: { position: 'absolute', bottom: 0, width: '100%', padding: 25, backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, elevation: 20 },
     btnRow: { flexDirection: 'row', gap: 12 },
@@ -366,6 +513,67 @@ const styles = StyleSheet.create({
     btnSuccess: { backgroundColor: COLORS.PRIMARY, width: '100%' },
     btnDisabled: { backgroundColor: '#CBD5E1', width: '100%' },
     mainBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800' },
-    loadingWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    loadingText: { marginTop: 10, color: COLORS.TEXT, fontWeight: 'bold' }
+    loadingWrapper: { 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        backgroundColor: COLORS.LIGHT_BG,
+        paddingHorizontal: 30,
+    },
+    loadingCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        padding: 32,
+        alignItems: 'center',
+        width: '100%',
+        maxWidth: 350,
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 4,
+        },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+    loadingIconContainer: {
+        position: 'relative',
+        marginBottom: 24,
+    },
+    loadingIconCircle: {
+        width: 90,
+        height: 90,
+        borderRadius: 45,
+        backgroundColor: '#E8F5F0',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#B8E6D5',
+    },
+    loadingPulse: {
+        position: 'absolute',
+        width: 90,
+        height: 90,
+        borderRadius: 45,
+        backgroundColor: COLORS.PRIMARY,
+        opacity: 0.2,
+    },
+    loadingTitle: {
+        fontSize: 22,
+        fontFamily: 'Fredoka-Bold',
+        color: COLORS.TEXT,
+        marginBottom: 8,
+        textAlign: 'center',
+    },
+    loadingSubtitle: {
+        fontSize: 14,
+        fontFamily: 'Fredoka-Regular',
+        color: COLORS.SUBTEXT,
+        textAlign: 'center',
+        lineHeight: 20,
+        marginBottom: 20,
+    },
+    loadingIndicatorWrapper: {
+        marginTop: 8,
+    },
 });

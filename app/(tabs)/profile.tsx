@@ -58,23 +58,52 @@ export default function ProfileScreen() {
   };
   
   const getDivision = () => {
+    console.log('🔍 [Profile getDivision] Debug user object:', JSON.stringify(user, null, 2));
+    
     let divisionName = '';
     let areaName = '';
-    if (user?.division_id && typeof user.division_id === 'object' && user.division_id.name) {
-      divisionName = user.division_id.name;
-    } else if (user?.division?.name) {
-      divisionName = user.division.name;
+    
+    // Try different possible structures from API
+    // Structure 1: user.division_id (object)
+    if (user?.division_id && typeof user.division_id === 'object') {
+      const divObj = user.division_id as any;
+      console.log('📦 [Profile] Division object:', JSON.stringify(divObj, null, 2));
+      
+      if (divObj.name) divisionName = divObj.name;
+      if (divObj.area?.name) areaName = divObj.area.name;
     }
-    if (user?.division_id && typeof user.division_id === 'object' && user.division_id.area && user.division_id.area.name) {
-      areaName = user.division_id.area.name;
-    } else if (user?.area && user.area.name) {
-      areaName = user.area.name;
+    
+    // Structure 2: user.division (object)
+    if (!divisionName && user?.division && typeof user.division === 'object') {
+      const divObj = user.division as any;
+      console.log('📦 [Profile] Division object (alt):', JSON.stringify(divObj, null, 2));
+      
+      if (divObj.name) divisionName = divObj.name;
+      if (divObj.area?.name) areaName = divObj.area.name;
+    }
+    
+    // Structure 3: user.area (direct)
+    if (!areaName && user?.area && typeof user.area === 'object') {
+      const areaObj = user.area as any;
+      console.log('📍 [Profile] Area object:', JSON.stringify(areaObj, null, 2));
+      
+      if (areaObj.name) areaName = areaObj.name;
+    }
+    
+    // Structure 4: direct string fields
+    if (!divisionName && (user as any)?.division_name) {
+      divisionName = (user as any).division_name;
+    }
+    if (!areaName && (user as any)?.area_name) {
+      areaName = (user as any).area_name;
     }
 
-    if (areaName && divisionName) return `${areaName} • ${divisionName}`;
-    if (areaName) return areaName;
-    if (divisionName) return divisionName;
-    return '-';
+    const result = areaName && divisionName 
+      ? `${areaName} • ${divisionName}` 
+      : areaName || divisionName || '-';
+    
+    console.log('✅ [Profile getDivision] Result:', result);
+    return result;
   }
 
   return (

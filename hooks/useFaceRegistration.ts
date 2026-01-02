@@ -1,5 +1,5 @@
 import { FACE_REGISTER_CONFIG } from '@/constants/faceRegistration';
-import { registerFaceVector } from '@/services/faceVectorService';
+import { faceService } from '@/services/faceVectorService';
 import { EnrollStep, FaceRegistrationModalState } from '@/types/faceRegistration';
 import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -129,7 +129,13 @@ export function useFaceRegistration(): UseFaceRegistrationReturn {
     setLoading(true);
 
     try {
-      const result = await registerFaceVector(faceVector);
+      console.log('📤 Mengirim vektor wajah ke server...');
+      console.log('Vector length:', faceVector.length);
+      
+      const result = await faceService.registerFaceVector(faceVector);
+      
+      console.log('📥 Response dari server:', result);
+      
       if (result.success) {
         setModal({
           visible: true,
@@ -145,7 +151,8 @@ export function useFaceRegistration(): UseFaceRegistrationReturn {
           message: result.message || 'Data tidak tersimpan, coba lagi ya.',
         });
       }
-    } catch {
+    } catch (error) {
+      console.error('❌ Error saat registrasi:', error);
       setModal({
         visible: true,
         type: 'error',

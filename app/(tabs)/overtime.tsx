@@ -1,18 +1,55 @@
 import React from 'react';
-import { View, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { OvertimeHeader } from '../../components/overtime/OvertimeHeader';
-import { OvertimeCard } from '../../components/overtime/OvertimeCard';
 import { EmptyOvertimeState } from '../../components/overtime/EmptyOvertimeState';
+import { FilterChips } from '../../components/overtime/FilterChips';
+import { OvertimeCard } from '../../components/overtime/OvertimeCard';
+import { OvertimeHeader } from '../../components/overtime/OvertimeHeader';
+import { SearchBar } from '../../components/overtime/SearchBar';
+import { SortButton } from '../../components/overtime/SortButton';
+import { OVERTIME_COLORS } from '../../constants/overtime';
 import { useOvertimeList } from '../../hooks/useOvertimeList';
-import { OVERTIME_COLORS } from '../../constants/overtime.constants';
-import type { OvertimeRecord } from '../../types/overtime.types';
+import type { OvertimeRecord } from '../../types/overtime';
 
 export default function OvertimeScheduleScreen() {
-  const { loading, overtimes, refreshing, refetch } = useOvertimeList();
+  const {
+    loading,
+    overtimes,
+    allOvertimes,
+    refreshing,
+    refetch,
+    searchQuery,
+    setSearchQuery,
+    filterType,
+    setFilterType,
+    sortType,
+    setSortType,
+    filterCounts,
+  } = useOvertimeList();
 
   const renderItem = ({ item }: { item: OvertimeRecord }) => (
     <OvertimeCard overtime={item} />
+  );
+
+  const renderHeader = () => (
+    <>
+      <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+      
+      <View style={styles.filterRow}>
+        <FilterChips
+          selectedFilter={filterType}
+          onFilterChange={setFilterType}
+          counts={filterCounts}
+        />
+      </View>
+
+      <View style={styles.sortRow}>
+        <Text style={styles.resultText}>
+          {overtimes.length} dari {allOvertimes.length} lembur
+        </Text>
+        <SortButton currentSort={sortType} onSortChange={setSortType} />
+      </View>
+    </>
   );
 
   if (loading && !refreshing) {
@@ -34,6 +71,7 @@ export default function OvertimeScheduleScreen() {
         data={overtimes}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
+        ListHeaderComponent={renderHeader}
         contentContainerStyle={styles.listPadding}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -43,7 +81,11 @@ export default function OvertimeScheduleScreen() {
             colors={[OVERTIME_COLORS.PRIMARY]}
           />
         }
-        ListEmptyComponent={<EmptyOvertimeState />}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <EmptyOvertimeState />
+          </View>
+        }
       />
     </SafeAreaView>
   );
@@ -60,7 +102,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   listPadding: {
-    padding: 20,
+    paddingTop: 20,
     paddingBottom: 100,
+  },
+  filterRow: {
+    marginBottom: 16,
+  },
+  sortRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  resultText: {
+    fontSize: 14,
+    fontFamily: 'Fredoka-Medium',
+    color: OVERTIME_COLORS.TEXT_SECONDARY,
+  },
+  emptyContainer: {
+    paddingHorizontal: 20,
   },
 });

@@ -236,16 +236,14 @@ export const getDayName = (day: number): string => {
 
 /**
  * Format tanggal menjadi format Indonesia lengkap
- * @param dateStr - ISO date string
+ * @param dateStr - Date string in ISO format (optional, defaults to today)
  * @returns Formatted date string (e.g., "Rabu, 1 Januari 2026")
  */
 export const formatDateFull = (dateStr?: string): string => {
-  if (!dateStr) return '-';
+  // Jika tidak ada parameter, gunakan tanggal hari ini
+  const date = dateStr ? new Date(dateStr.split('T')[0]) : new Date();
   
-  const datePart = dateStr.split('T')[0];
-  const date = new Date(datePart);
-  
-  if (isNaN(date.getTime())) return dateStr;
+  if (isNaN(date.getTime())) return dateStr || '-';
   
   return date.toLocaleDateString('id-ID', {
     weekday: 'long',
@@ -323,7 +321,7 @@ export const getAbsensiTypeLabel = (status: string): string => {
 };
 
 /**
- * Format tanggal dan waktu lengkap dari ISO string
+ * Format tanggal dan waktu lengkap dari ISO string dengan GMT+7 (WIB)
  * @param isoString - ISO datetime string
  * @returns Object dengan dateDisplay, timeDisplay, dan dayName
  */
@@ -340,47 +338,47 @@ export const formatFullDateTime = (isoString: string): {
     };
   }
 
-  let datePart = isoString;
-  let timePart = '';
-
-  // Split date and time
-  if (isoString.includes('T')) {
-    [datePart, timePart] = isoString.split('T');
-  } else if (isoString.includes(' ')) {
-    [datePart, timePart] = isoString.split(' ');
+  try {
+    // Parse ISO string ke Date object (otomatis konversi ke local timezone)
+    const date = new Date(isoString);
+    
+    console.log('🕐 [formatFullDateTime] Input:', isoString);
+    console.log('🕐 [formatFullDateTime] Parsed (WIB):', date.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }));
+    
+    // Format date
+    const dateDisplay = date.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta'
+    });
+    
+    // Format day name
+    const dayName = date.toLocaleDateString('id-ID', { 
+      weekday: 'long',
+      timeZone: 'Asia/Jakarta'
+    });
+    
+    // Format time (GMT+7)
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const timeDisplay = `${hours}:${minutes}`;
+    
+    console.log('🕐 [formatFullDateTime] Output:', { dateDisplay, timeDisplay, dayName });
+    
+    return {
+      dateDisplay,
+      timeDisplay,
+      dayName,
+    };
+  } catch (error) {
+    console.error('❌ [formatFullDateTime] Error:', error);
+    return {
+      dateDisplay: '-',
+      timeDisplay: '--:--',
+      dayName: '-',
+    };
   }
-
-  // Format date: YYYY-MM-DD -> 22 Des 2025
-  let dateDisplay = '-';
-  let dayName = '-';
-
-  if (datePart && datePart.includes('-')) {
-    const [year, month, day] = datePart.split('-');
-    if (year && month && day) {
-      const dateObj = new Date(`${year}-${month}-${day}`);
-      dateDisplay = dateObj.toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      });
-      dayName = dateObj.toLocaleDateString('id-ID', { weekday: 'long' });
-    }
-  }
-
-  // Format time: HH:mm:ss -> HH:mm
-  let timeDisplay = '--:--';
-  if (timePart) {
-    const [hours, minutes] = timePart.split(':');
-    if (hours && minutes) {
-      timeDisplay = `${hours}:${minutes}`;
-    }
-  }
-
-  return {
-    dateDisplay,
-    timeDisplay,
-    dayName,
-  };
 };
 
 /**

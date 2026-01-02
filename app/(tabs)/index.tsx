@@ -1,14 +1,15 @@
-import { useRouter } from 'expo-router';
-import React from 'react';
-import { RefreshControl, ScrollView, StatusBar, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { AttendanceCard } from '@/components/home/AttendanceCard';
 import { AttendanceHistory } from '@/components/home/AttendanceHistory';
+import { FaceRegisterModal } from '@/components/home/FaceRegisterModal';
 import { HomeHeader } from '@/components/home/HomeHeader';
 import { OvertimeCard } from '@/components/home/OvertimeCard';
 import { ShiftCard } from '@/components/home/ShiftCard';
 import { COLORS } from '@/constants/home';
 import { useHomeData } from '@/hooks/useHomeData';
+import { useRouter } from 'expo-router';
+import React from 'react';
+import { RefreshControl, ScrollView, StatusBar, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen(): React.JSX.Element {
   const router = useRouter();
@@ -19,6 +20,8 @@ export default function HomeScreen(): React.JSX.Element {
     recentHistory,
     todayShift,
     overtimeData,
+    showFaceRegisterModal,
+    setShowFaceRegisterModal,
     loadAttendanceData,
   } = useHomeData();
 
@@ -57,6 +60,15 @@ export default function HomeScreen(): React.JSX.Element {
           onViewAllPress={() => router.push('/history')}
         />
       </ScrollView>
+
+      <FaceRegisterModal
+        visible={showFaceRegisterModal}
+        onClose={() => setShowFaceRegisterModal(false)}
+        onRegister={() => {
+          setShowFaceRegisterModal(false);
+          router.push('/face-register');
+        }}
+      />
     </SafeAreaView>
   );
 }
